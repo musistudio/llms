@@ -1,4 +1,5 @@
 import { FastifyRequest, FastifyReply } from "fastify";
+import { log } from "@/utils/log";
 
 export interface ApiError extends Error {
   statusCode?: number;
@@ -24,6 +25,7 @@ export async function errorHandler(
   request: FastifyRequest,
   reply: FastifyReply
 ) {
+  log(error.type, error.message, error.stack);
   request.log.error(error);
 
   const statusCode = error.statusCode || 500;

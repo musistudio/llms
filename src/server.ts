@@ -48,6 +48,7 @@ interface ServerOptions {
 function createApp(): FastifyInstance {
   const fastify = Fastify({
     bodyLimit: 50 * 1024 * 1024,
+    logger: process.env.LOG === "true",
   });
 
   // Register error handler

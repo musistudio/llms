@@ -28,6 +28,18 @@ export function sendUnifiedRequest(
     combinedSignal = timeoutSignal;
   }
 
+  // Apply extra headers if provided
+  // This allows for dynamic headers to be set based on the request context
+  if (request.extra_headers) {
+    Object.entries(request.extra_headers).forEach(([key, value]) => {
+      if (value) {
+        headers.set(key, value as string);
+      } else {
+        headers.delete(key);
+      }
+    });
+  }
+
   const fetchOptions: RequestInit = {
     method: "POST",
     headers: headers,
@@ -40,6 +52,6 @@ export function sendUnifiedRequest(
       new URL(config.httpsProxy).toString()
     );
   }
-  log("final request:", typeof url === "string" ? url : url.toString(), config.httpsProxy,  fetchOptions);
+  log("final request:", typeof url === "string" ? url : url.toString(), config.httpsProxy, fetchOptions);
   return fetch(typeof url === "string" ? url : url.toString(), fetchOptions);
 }

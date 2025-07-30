@@ -1,4 +1,4 @@
-import { TransformerConstructor } from "@/types/transformer";
+import { Transformer, TransformerConstructor } from "@/types/transformer";
 import {
   LLMProvider,
   RegisterProviderRequest,
@@ -40,36 +40,42 @@ export class ProviderService {
 
         const transformer: LLMProvider["transformer"] = {}
 
+        const processTransformerArray = (transformers: (string | Array<any>)[]): (Transformer | TransformerConstructor | undefined)[] => {
+          return transformers.map((transformerItem) => {
+            // 处理 [transformerName, options] 格式
+            if (Array.isArray(transformerItem) && typeof transformerItem[0] === 'string') {
+              const [transformerName, options] = transformerItem;
+              const retrievedItem = this.transformerService.getTransformer(transformerName);
+              if (retrievedItem) {
+                const constructor = (retrievedItem instanceof Function ? retrievedItem : retrievedItem.constructor) as TransformerConstructor;
+                try {
+                  return new constructor(options);
+                } catch (error) {
+                  log(`Error re-instantiating transformer ${transformerName}:`, error);
+                  return undefined;
+                }
+              }
+            }
+            // 处理字符串格式
+            if (typeof transformerItem === 'string') {
+              return this.transformerService.getTransformer(transformerItem);
+            }
+            return undefined;
+          });
+        };
+
         if (providerConfig.transformer) {
           Object.keys(providerConfig.transformer).forEach(key => {
             if (key === 'use') {
               if (Array.isArray(providerConfig.transformer.use)) {
-                transformer.use = providerConfig.transformer.use.map((transformer) => {
-                  if (Array.isArray(transformer) && typeof transformer[0] === 'string') {
-                    const Constructor = this.transformerService.getTransformer(transformer[0]);
-                    if (Constructor) {
-                      return new (Constructor as TransformerConstructor)(transformer[1]);
-                    }
-                  }
-                  if (typeof transformer === 'string') {
-                    return this.transformerService.getTransformer(transformer);
-                  }
-                }).filter((transformer) => typeof transformer !== 'undefined');
+                const processedTransformers = processTransformerArray(providerConfig.transformer.use);
+                transformer.use = processedTransformers.filter((t): t is Transformer => t !== undefined);
               }
             } else {
               if (Array.isArray(providerConfig.transformer[key]?.use)) {
+                const processedTransformers = processTransformerArray(providerConfig.transformer[key].use);
                 transformer[key] = {
-                  use: providerConfig.transformer[key].use.map((transformer) => {
-                    if (Array.isArray(transformer) && typeof transformer[0] === 'string') {
-                      const Constructor = this.transformerService.getTransformer(transformer[0]);
-                      if (Constructor) {
-                        return new (Constructor as TransformerConstructor)(transformer[1]);
-                      }
-                    }
-                    if (typeof transformer === 'string') {
-                      return this.transformerService.getTransformer(transformer);
-                    }
-                  }).filter((transformer) => typeof transformer !== 'undefined')
+                  use: processedTransformers.filter((t): t is Transformer => t !== undefined)
                 }
               }
             }

@@ -35,6 +35,7 @@ export class ProviderService {
           !providerConfig.api_base_url ||
           !providerConfig.api_key
         ) {
+          log(`Invalid provider config: ${JSON.stringify(providerConfig)}`);
           return;
         }
 
@@ -47,12 +48,16 @@ export class ProviderService {
                 transformer.use = providerConfig.transformer.use.map((transformer) => {
                   if (Array.isArray(transformer) && typeof transformer[0] === 'string') {
                     const Constructor = this.transformerService.getTransformer(transformer[0]);
-                    if (Constructor) {
+                    if (Constructor && typeof Constructor === 'function') {
                       return new (Constructor as TransformerConstructor)(transformer[1]);
                     }
                   }
                   if (typeof transformer === 'string') {
-                    return this.transformerService.getTransformer(transformer);
+                    const Constructor = this.transformerService.getTransformer(transformer);
+                    if (Constructor && typeof Constructor === 'function') {
+                      return new (Constructor as TransformerConstructor)();
+                    }
+                    return Constructor;
                   }
                 }).filter((transformer) => typeof transformer !== 'undefined');
               }
@@ -62,12 +67,16 @@ export class ProviderService {
                   use: providerConfig.transformer[key].use.map((transformer) => {
                     if (Array.isArray(transformer) && typeof transformer[0] === 'string') {
                       const Constructor = this.transformerService.getTransformer(transformer[0]);
-                      if (Constructor) {
+                      if (Constructor && typeof Constructor === 'function') {
                         return new (Constructor as TransformerConstructor)(transformer[1]);
                       }
                     }
                     if (typeof transformer === 'string') {
-                      return this.transformerService.getTransformer(transformer);
+                      const Constructor = this.transformerService.getTransformer(transformer);
+                      if (Constructor && typeof Constructor === 'function') {
+                        return new (Constructor as TransformerConstructor)();
+                      }
+                      return Constructor;
                     }
                   }).filter((transformer) => typeof transformer !== 'undefined')
                 }
@@ -141,7 +150,7 @@ export class ProviderService {
 
     if (updates.models) {
       provider.models.forEach((model) => {
-        const fullModel = `${provider.id},${model}`;
+        const fullModel = `${provider.name},${model}`;
         this.modelRoutes.delete(fullModel);
         this.modelRoutes.delete(model);
       });

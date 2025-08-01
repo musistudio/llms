@@ -1,16 +1,47 @@
-import { MessageContent, TextContent, UnifiedChatRequest } from "@/types/llm";
-import { Transformer } from "../types/transformer";
+import { UnifiedChatRequest } from "@/types/llm";
+import { Transformer, TransformerOptions } from "../types/transformer";
 import { log } from "../utils/log";
 import { v4 as uuidv4 } from "uuid";
 
 export class OpenrouterTransformer implements Transformer {
-  name = "openrouter";
+  static TransformerName = "openrouter";
+  private referer?: string;
+  private title?: string;
+  private providerOrder?: string[];
+
+  constructor(private readonly options?: TransformerOptions) {
+    this.referer = this.options?.referer;
+    this.title = this.options?.title;
+    this.providerOrder = this.options?.providerOrder;
+  }
 
   async transformRequestIn(
     request: UnifiedChatRequest
-  ): Promise<UnifiedChatRequest> {
-    if (!request.model.includes("claude")) {
-      request.messages.forEach((msg) => {
+  ): Promise<Record<string, any>> {
+    // Build headers configuration
+    const headers: Record<string, string> = {};
+
+    if (this.referer) {
+      headers['HTTP-Referer'] = this.referer;
+    }
+
+    if (this.title) {
+      headers['X-Title'] = this.title;
+    }
+
+    // Build request body with provider order if specified
+    const requestBody: any = { ...request };
+
+    // Set provider order to control which providers OpenRouter should try
+    // Supports provider slugs like: "google-vertex/global"
+    if (this.providerOrder && this.providerOrder.length > 0) {
+      requestBody.provider = {
+        order: this.providerOrder
+      };
+    }
+
+    if (!requestBody.model.includes("claude")) {
+      requestBody.messages.forEach((msg: any) => {
         if (Array.isArray(msg.content)) {
           msg.content.forEach((item: any) => {
             if (item.cache_control) {
@@ -28,7 +59,7 @@ export class OpenrouterTransformer implements Transformer {
         }
       });
     } else {
-      request.messages.forEach((msg) => {
+      requestBody.messages.forEach((msg: any) => {
         if (Array.isArray(msg.content)) {
           msg.content.forEach((item: any) => {
             if (item.type === "image_url") {
@@ -41,7 +72,11 @@ export class OpenrouterTransformer implements Transformer {
         }
       });
     }
-    return request;
+
+    return {
+      ...requestBody,
+      extra_headers: headers,
+    };
   }
 
   async transformResponseOut(response: Response): Promise<Response> {
@@ -72,7 +107,7 @@ export class OpenrouterTransformer implements Transformer {
           const processBuffer = (
             buffer: string,
             controller: ReadableStreamDefaultController,
-            encoder: TextEncoder
+            encoder: typeof TextEncoder.prototype
           ) => {
             const lines = buffer.split("\n");
             for (const line of lines) {
@@ -86,7 +121,7 @@ export class OpenrouterTransformer implements Transformer {
             line: string,
             context: {
               controller: ReadableStreamDefaultController;
-              encoder: TextEncoder;
+              encoder: typeof TextEncoder.prototype;
               hasTextContent: () => boolean;
               setHasTextContent: (val: boolean) => void;
               reasoningContent: () => string;

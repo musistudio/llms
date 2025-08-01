@@ -90,6 +90,7 @@ export interface UnifiedChatRequest {
   stream?: boolean;
   tools?: UnifiedTool[];
   tool_choice?: "auto" | "none" | string;
+  extra_headers?: Record<string, string>;
 }
 
 // 统一的响应接口

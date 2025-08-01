@@ -40,7 +40,14 @@ export class TransformerService {
   getTransformersWithEndpoint(): { name: string; transformer: Transformer }[] {
     const result: { name: string; transformer: Transformer }[] = [];
 
-    this.transformers.forEach((transformer, name) => {
+    this.transformers.forEach((transformerOrConstructor, name) => {
+      let transformer: Transformer;
+      if (typeof transformerOrConstructor === 'function') {
+        transformer = new (transformerOrConstructor as TransformerConstructor)();
+      } else {
+        transformer = transformerOrConstructor;
+      }
+      
       if (transformer.endPoint) {
         result.push({ name, transformer });
       }
@@ -55,7 +62,14 @@ export class TransformerService {
   }[] {
     const result: { name: string; transformer: Transformer }[] = [];
 
-    this.transformers.forEach((transformer, name) => {
+    this.transformers.forEach((transformerOrConstructor, name) => {
+      let transformer: Transformer;
+      if (typeof transformerOrConstructor === 'function') {
+        transformer = new (transformerOrConstructor as TransformerConstructor)();
+      } else {
+        transformer = transformerOrConstructor;
+      }
+      
       if (!transformer.endPoint) {
         result.push({ name, transformer });
       }
@@ -120,12 +134,13 @@ export class TransformerService {
   private async registerDefaultTransformersInternal(): Promise<void> {
     try {
       Object.values(Transformers)
-        .forEach((TransformerStatic: TransformerConstructor) => {
+        .forEach((TransformerStatic: any) => {
           if ('TransformerName' in TransformerStatic && typeof TransformerStatic.TransformerName === 'string') {
             this.registerTransformer(TransformerStatic.TransformerName, TransformerStatic);
           } else {
-            const transformerInstance = new TransformerStatic();
-            this.registerTransformer(transformerInstance.name!, transformerInstance);
+            // Create a temporary instance to get the name
+            const tempInstance = new TransformerStatic();
+            this.registerTransformer(tempInstance.name!, TransformerStatic);
           }
         })
     } catch (error) {

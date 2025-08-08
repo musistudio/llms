@@ -259,7 +259,7 @@ export async function transformResponseOut(
             content: jsonResponse.candidates[0].content?.parts
               ?.filter((part: Part) => part.text)
               ?.map((part: Part) => part.text)
-              ?.join("\n"),
+              ?.join("\n") || "",
             role: "assistant",
             tool_calls: tool_calls.length > 0 ? tool_calls : undefined,
           },
@@ -299,9 +299,19 @@ export async function transformResponseOut(
           log(`${providerName} chunk:`, chunkStr);
           try {
             const chunk = JSON.parse(chunkStr);
-            const tool_calls = chunk.candidates[0].content?.parts
-              ?.filter((part: Part) => part.functionCall)
-              ?.map((part: Part) => ({
+            
+            // Check if chunk has valid structure
+            if (!chunk.candidates || !chunk.candidates[0]) {
+              log(`Invalid chunk structure:`, chunkStr);
+              return;
+            }
+            
+            const candidate = chunk.candidates[0];
+            const parts = candidate.content?.parts || [];
+            
+            const tool_calls = parts
+              .filter((part: Part) => part.functionCall)
+              .map((part: Part) => ({
                 id:
                   part.functionCall?.id ||
                   `tool_${Math.random().toString(36).substring(2, 15)}`,
@@ -311,21 +321,22 @@ export async function transformResponseOut(
                   arguments: JSON.stringify(part.functionCall?.args || {}),
                 },
               }));
+              
+            const textContent = parts
+              .filter((part: Part) => part.text)
+              .map((part: Part) => part.text)
+              .join("\n");
+            
             const res = {
               choices: [
                 {
                   delta: {
                     role: "assistant",
-                    content: chunk.candidates[0].content?.parts
-                      ?.filter((part: Part) => part.text)
-                      ?.map((part: Part) => part.text)
-                      ?.join("\n"),
+                    content: textContent || "",
                     tool_calls: tool_calls.length > 0 ? tool_calls : undefined,
                   },
-                  finish_reason:
-                    chunk.candidates[0].finishReason?.toLowerCase() || null,
-                  index:
-                    chunk.candidates[0].index || tool_calls.length > 0 ? 1 : 0,
+                  finish_reason: candidate.finishReason?.toLowerCase() || null,
+                  index: candidate.index || (tool_calls.length > 0 ? 1 : 0),
                   logprobs: null,
                 },
               ],
@@ -335,31 +346,31 @@ export async function transformResponseOut(
               object: "chat.completion.chunk",
               system_fingerprint: "fp_a49d71b8a1",
               usage: {
-                completion_tokens: chunk.usageMetadata.candidatesTokenCount,
-                prompt_tokens: chunk.usageMetadata.promptTokenCount,
+                completion_tokens: chunk.usageMetadata?.candidatesTokenCount || 0,
+                prompt_tokens: chunk.usageMetadata?.promptTokenCount || 0,
                 cached_content_token_count:
-                  chunk.usageMetadata.cachedContentTokenCount || null,
-                total_tokens: chunk.usageMetadata.totalTokenCount,
+                  chunk.usageMetadata?.cachedContentTokenCount || null,
+                total_tokens: chunk.usageMetadata?.totalTokenCount || 0,
               },
             };
             if (
-              chunk.candidates[0]?.groundingMetadata?.groundingChunks?.length
+              candidate?.groundingMetadata?.groundingChunks?.length
             ) {
               res.choices[0].delta.annotations =
-                chunk.candidates[0].groundingMetadata.groundingChunks.map(
+                candidate.groundingMetadata.groundingChunks.map(
                   (groundingChunk, index) => {
                     const support =
-                      chunk.candidates[0]?.groundingMetadata?.groundingSupports?.filter(
-                        (item) => item.groundingChunkIndices.includes(index)
+                      candidate?.groundingMetadata?.groundingSupports?.filter(
+                        (item) => item.groundingChunkIndices?.includes(index)
                       );
                     return {
                       type: "url_citation",
                       url_citation: {
-                        url: groundingChunk.web.uri,
-                        title: groundingChunk.web.title,
-                        content: support?.[0].segment.text,
-                        start_index: support?.[0].segment.startIndex,
-                        end_index: support?.[0].segment.endIndex,
+                        url: groundingChunk?.web?.uri || "",
+                        title: groundingChunk?.web?.title || "",
+                        content: support?.[0]?.segment?.text || "",
+                        start_index: support?.[0]?.segment?.startIndex || 0,
+                        end_index: support?.[0]?.segment?.endIndex || 0,
                       },
                     };
                   }

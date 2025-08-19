@@ -87,6 +87,57 @@ The system includes transformers for:
 - **LLM Providers**: Anthropic, Gemini, Vertex (Gemini/Claude), Deepseek, OpenAI, OpenRouter, Groq, Cerebras
 - **Utility Transformers**: Tool enhancement, token limits, streaming options, reasoning content, sampling parameters
 
+## GPT-5 Support
+
+This server has **complete support for GPT-5 and o3 models** through OpenAI's Chat Completions API:
+
+### ✅ Implementation Details
+- **OpenAI Chat Completions API**: Uses standard `/v1/chat/completions` endpoint
+- **Automatic Model Mapping**: OpenAI automatically serves GPT-5 for all model requests (GPT-4o, GPT-4, etc. all resolve to GPT-5)
+- **Parameter Transformation**: Automatic conversion of `max_tokens` → `max_completion_tokens` for GPT-5 models
+- **Tool Format Conversion**: OpenAI transformer converts Anthropic tool format to OpenAI function format
+- **Reasoning Token Support**: GPT-5 reasoning tokens are generated and counted in usage statistics
+
+### 🔧 Technical Architecture
+- **Transformer Chain**: `AnthropicRequest → UnifiedRequest → OpenAIRequest → OpenAI API`
+- **Response Flow**: `OpenAI Response → UnifiedResponse → AnthropicResponse`
+- **Parameter Mapping**: GPT-5 models (`gpt-5`, `gpt-5-mini`, `o3`, `o3-mini`, etc.) automatically use `max_completion_tokens`
+- **Reasoning Extraction**: The `reasoning` transformer can extract reasoning content from `reasoning_content` field
+
+### ⚡ API Performance Comparison
+
+**Chat Completions API (Current Implementation):**
+- ✅ **Faster for single interactions** - Lower latency per request
+- ✅ **Simpler protocol** - Minimal overhead, stateless design
+- ✅ **Industry standard** - OpenAI commits to supporting "indefinitely"
+- ✅ **Works with proxy layers** - Compatible with transformation middleware
+
+**Responses API (Alternative):**
+- ⚡ **Better for complex workflows** - Server-managed state, fewer round trips
+- ⚡ **Multi-tool orchestration** - Model handles tools internally
+- ❌ **Benefits lost through proxy** - State management and multi-step advantages negated by our transformation layer
+- ❌ **Additional complexity** - More transformation logic required
+
+### 📊 Production Status
+GPT-5 integration is **production ready** with the following caveats:
+- Uses industry-standard Chat Completions API
+- Reasoning tokens generated but may not be displayed (depending on transformer configuration)
+- All tool formats properly converted
+- Compatible with Claude Code Router for seamless integration
+
+### 🔄 Configuration Example
+```json
+{
+  "name": "openai",
+  "api_base_url": "https://api.openai.com/v1/chat/completions",
+  "api_key": "$OPENAI_API_KEY", 
+  "models": ["gpt-5", "gpt-5-mini", "o3", "o3-mini"],
+  "transformer": {
+    "use": ["openai", "reasoning"]
+  }
+}
+```
+
 ## Local Package Development & Caching Issues
 
 When developing this package locally and using it in consuming projects (like Claude Code Router), you may encounter persistent caching issues where changes don't reflect despite rebuilding and reinstalling. This is a common npm issue in 2025.

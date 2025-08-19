@@ -86,3 +86,77 @@ The project uses esbuild for building, with separate CJS and ESM outputs. The bu
 The system includes transformers for:
 - **LLM Providers**: Anthropic, Gemini, Vertex (Gemini/Claude), Deepseek, OpenAI, OpenRouter, Groq, Cerebras
 - **Utility Transformers**: Tool enhancement, token limits, streaming options, reasoning content, sampling parameters
+
+## Local Package Development & Caching Issues
+
+When developing this package locally and using it in consuming projects (like Claude Code Router), you may encounter persistent caching issues where changes don't reflect despite rebuilding and reinstalling. This is a common npm issue in 2025.
+
+### Common Symptoms
+- Code changes don't appear in consuming project
+- Old transformers/features still show up in API endpoints
+- Package appears to install but uses stale code
+- Multiple reinstall attempts fail to update
+
+### Root Causes
+1. **NPM package cache** - stores downloaded packages
+2. **Module resolution cache** - Node.js caches module lookups  
+3. **Build tool caches** - bundlers cache compiled code
+4. **Lock file constraints** - package-lock.json pins versions
+
+### Complete Solution (Nuclear Option)
+```bash
+# In the consuming project (ccr-dev)
+rm -rf node_modules
+rm -f package-lock.json
+npm cache clean --force
+npm cache verify
+npm install file:../llms-dev/musistudio-llms-1.0.22.tgz --force
+npm run build
+```
+
+### Development Workflow Best Practices
+
+**In llms-dev (this package):**
+```bash
+# 1. Make your changes
+# 2. Build and package
+npm run build
+rm -f musistudio-llms-*.tgz  # Remove old packages
+npm pack
+```
+
+**In consuming project (ccr-dev):**
+```bash
+# 3. Stop all running services first
+ccr stop
+
+# 4. Force clean update
+rm -rf node_modules/@musistudio
+npm uninstall @musistudio/llms
+npm install file:../llms-dev/musistudio-llms-1.0.22.tgz --force
+npm run build
+
+# 5. Restart services
+ccr start
+```
+
+### Advanced Troubleshooting
+
+**Verify package contents:**
+```bash
+tar -tzf musistudio-llms-1.0.22.tgz | grep -E "(transformer|index)"
+```
+
+**Check module resolution:**
+```bash
+node -e "console.log(require.resolve('@musistudio/llms'))"
+```
+
+**Important Notes:**
+- In 2025, `npm update` often fails - use `npm install package@latest` or `--force` flag
+- Always stop running services before updating local packages
+- Build caches (esbuild/webpack) can persist stale code - clear `dist/` directories
+- Use `npm ci` in CI/CD environments for reproducible builds
+
+### Why This Happens
+NPM's caching system is designed for performance with published packages, but local file: dependencies can create edge cases where caches aren't properly invalidated when the source files change.

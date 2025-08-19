@@ -4,6 +4,7 @@ import { VertexGeminiTransformer } from "./vertex-gemini.transformer";
 import { DeepseekTransformer } from "./deepseek.transformer";
 import { TooluseTransformer } from "./tooluse.transformer";
 import { OpenrouterTransformer } from "./openrouter.transformer";
+import { OpenAITransformer } from "./openai.transformer";
 import { MaxTokenTransformer } from "./maxtoken.transformer";
 import { GroqTransformer } from "./groq.transformer";
 import { CleancacheTransformer } from "./cleancache.transformer";
@@ -23,6 +24,7 @@ export default {
   DeepseekTransformer,
   TooluseTransformer,
   OpenrouterTransformer,
+  OpenAITransformer,
   MaxTokenTransformer,
   GroqTransformer,
   CleancacheTransformer,

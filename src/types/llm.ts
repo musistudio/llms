@@ -96,7 +96,7 @@ export interface UnifiedChatRequest {
     | "none"
     | "required"
     | string
-    | { type: "function"; function: { name: string };
+    | { type: "function"; function: { name: string } };
   reasoning?: {
     // OpenAI-style
     effort?: ThinkLevel;

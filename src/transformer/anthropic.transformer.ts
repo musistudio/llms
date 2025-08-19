@@ -8,6 +8,7 @@ import {
 import { Transformer, TransformerContext } from "@/types/transformer";
 import { v4 as uuidv4 } from "uuid";
 import { getThinkLevel } from "@/utils/thinking";
+import { createApiError } from "@/api/middleware";
 
 export class AnthropicTransformer implements Transformer {
   name = "Anthropic";
@@ -19,7 +20,7 @@ export class AnthropicTransformer implements Transformer {
       config: {
         headers: {
           "x-api-key": provider.apiKey,
-          Authorization: undefined,
+          authorization: undefined,
         },
       },
     };
@@ -236,10 +237,9 @@ export class AnthropicTransformer implements Transformer {
         let isClosed = false;
         let isThinkingStarted = false;
         let contentIndex = 0;
+        let currentContentBlockIndex = -1; // Track the current content block index
 
         const safeEnqueue = (data: Uint8Array) => {
-          this.logger.debug({ isClosed }, `execute safeEnqueue`);
-
           if (!isClosed) {
             try {
               controller.enqueue(data);
@@ -262,6 +262,22 @@ export class AnthropicTransformer implements Transformer {
         const safeClose = () => {
           if (!isClosed) {
             try {
+              // Close any remaining open content block
+              if (currentContentBlockIndex >= 0) {
+                const contentBlockStop = {
+                  type: "content_block_stop",
+                  index: currentContentBlockIndex,
+                };
+                safeEnqueue(
+                  encoder.encode(
+                    `event: content_block_stop\ndata: ${JSON.stringify(
+                      contentBlockStop
+                    )}\n\n`
+                  )
+                );
+                currentContentBlockIndex = -1;
+              }
+
               if (stopReasonMessageDelta) {
                 safeEnqueue(
                   encoder.encode(
@@ -271,6 +287,23 @@ export class AnthropicTransformer implements Transformer {
                   )
                 );
                 stopReasonMessageDelta = null;
+              } else {
+                safeEnqueue(
+                  encoder.encode(
+                    `event: message_delta\ndata: ${JSON.stringify({
+                      type: "message_delta",
+                      delta: {
+                        stop_reason: "end_turn",
+                        stop_sequence: null,
+                      },
+                      usage: {
+                        input_tokens: 0,
+                        output_tokens: 0,
+                        cache_read_input_tokens: 0,
+                      },
+                    })}\n\n`
+                  )
+                );
               }
               const messageStop = {
                 type: "message_stop",
@@ -324,16 +357,6 @@ export class AnthropicTransformer implements Transformer {
               this.logger.debug(`recieved data: ${data}`);
 
               if (data === "[DONE]") {
-                if (stopReasonMessageDelta) {
-                  safeEnqueue(
-                    encoder.encode(
-                      `event: message_delta\ndata: ${JSON.stringify(
-                        stopReasonMessageDelta
-                      )}\n\n`
-                    )
-                  );
-                  stopReasonMessageDelta = null;
-                }
                 continue;
               }
 
@@ -419,6 +442,22 @@ export class AnthropicTransformer implements Transformer {
                 }
 
                 if (choice?.delta?.thinking && !isClosed && !hasFinished) {
+                  // Close any previous content block if open
+                  if (currentContentBlockIndex >= 0) {
+                    const contentBlockStop = {
+                      type: "content_block_stop",
+                      index: currentContentBlockIndex,
+                    };
+                    safeEnqueue(
+                      encoder.encode(
+                        `event: content_block_stop\ndata: ${JSON.stringify(
+                          contentBlockStop
+                        )}\n\n`
+                      )
+                    );
+                    currentContentBlockIndex = -1;
+                  }
+
                   if (!isThinkingStarted) {
                     const contentBlockStart = {
                       type: "content_block_start",
@@ -432,6 +471,7 @@ export class AnthropicTransformer implements Transformer {
                         )}\n\n`
                       )
                     );
+                    currentContentBlockIndex = contentIndex;
                     isThinkingStarted = true;
                   }
                   if (choice.delta.thinking.signature) {
@@ -461,6 +501,7 @@ export class AnthropicTransformer implements Transformer {
                         )}\n\n`
                       )
                     );
+                    currentContentBlockIndex = -1;
                     contentIndex++;
                   } else if (choice.delta.thinking.content) {
                     const thinkingChunk = {
@@ -484,6 +525,26 @@ export class AnthropicTransformer implements Transformer {
                 if (choice?.delta?.content && !isClosed && !hasFinished) {
                   contentChunks++;
 
+                  // Close any previous content block if open and it's not a text content block
+                  if (currentContentBlockIndex >= 0) {
+                    // Check if current content block is text type
+                    const isCurrentTextBlock = hasTextContentStarted;
+                    if (!isCurrentTextBlock) {
+                      const contentBlockStop = {
+                        type: "content_block_stop",
+                        index: currentContentBlockIndex,
+                      };
+                      safeEnqueue(
+                        encoder.encode(
+                          `event: content_block_stop\ndata: ${JSON.stringify(
+                            contentBlockStop
+                          )}\n\n`
+                        )
+                      );
+                      currentContentBlockIndex = -1;
+                    }
+                  }
+
                   if (!hasTextContentStarted && !hasFinished) {
                     hasTextContentStarted = true;
                     const contentBlockStart = {
@@ -501,12 +562,13 @@ export class AnthropicTransformer implements Transformer {
                         )}\n\n`
                       )
                     );
+                    currentContentBlockIndex = contentIndex;
                   }
 
                   if (!isClosed && !hasFinished) {
                     const anthropicChunk = {
                       type: "content_block_delta",
-                      index: contentIndex,
+                      index: currentContentBlockIndex, // Use current content block index
                       delta: {
                         type: "text_delta",
                         text: choice.delta.content,
@@ -527,57 +589,61 @@ export class AnthropicTransformer implements Transformer {
                   !isClosed &&
                   !hasFinished
                 ) {
-                  const contentBlockStop = {
-                    type: "content_block_stop",
-                    index: contentIndex,
-                  };
-                  safeEnqueue(
-                    encoder.encode(
-                      `event: content_block_stop\ndata: ${JSON.stringify(
-                        contentBlockStop
-                      )}\n\n`
-                    )
-                  );
-                  hasTextContentStarted = false;
-                  choice?.delta?.annotations.forEach(
-                    (annotation, annotationIndex, annotations) => {
-                      contentIndex++;
-                      const contentBlockStart = {
-                        type: "content_block_start",
-                        index: contentIndex,
-                        content_block: {
-                          type: "web_search_tool_result",
-                          tool_use_id: `srvtoolu_${uuidv4()}`,
-                          content: [
-                            {
-                              type: "web_search_result",
-                              title: annotation.url_citation.title,
-                              url: annotation.url_citation.url,
-                            },
-                          ],
-                        },
-                      };
-                      safeEnqueue(
-                        encoder.encode(
-                          `event: content_block_start\ndata: ${JSON.stringify(
-                            contentBlockStart
-                          )}\n\n`
-                        )
-                      );
+                  // Close text content block if open
+                  if (currentContentBlockIndex >= 0 && hasTextContentStarted) {
+                    const contentBlockStop = {
+                      type: "content_block_stop",
+                      index: currentContentBlockIndex,
+                    };
+                    safeEnqueue(
+                      encoder.encode(
+                        `event: content_block_stop\ndata: ${JSON.stringify(
+                          contentBlockStop
+                        )}\n\n`
+                      )
+                    );
+                    currentContentBlockIndex = -1;
+                    hasTextContentStarted = false;
+                  }
 
-                      const contentBlockStop = {
-                        type: "content_block_stop",
-                        index: contentIndex,
-                      };
-                      safeEnqueue(
-                        encoder.encode(
-                          `event: content_block_stop\ndata: ${JSON.stringify(
-                            contentBlockStop
-                          )}\n\n`
-                        )
-                      );
-                    }
-                  );
+                  choice?.delta?.annotations.forEach((annotation: any) => {
+                    contentIndex++;
+                    const contentBlockStart = {
+                      type: "content_block_start",
+                      index: contentIndex,
+                      content_block: {
+                        type: "web_search_tool_result",
+                        tool_use_id: `srvtoolu_${uuidv4()}`,
+                        content: [
+                          {
+                            type: "web_search_result",
+                            title: annotation.url_citation.title,
+                            url: annotation.url_citation.url,
+                          },
+                        ],
+                      },
+                    };
+                    safeEnqueue(
+                      encoder.encode(
+                        `event: content_block_start\ndata: ${JSON.stringify(
+                          contentBlockStart
+                        )}\n\n`
+                      )
+                    );
+
+                    const contentBlockStop = {
+                      type: "content_block_stop",
+                      index: contentIndex,
+                    };
+                    safeEnqueue(
+                      encoder.encode(
+                        `event: content_block_stop\ndata: ${JSON.stringify(
+                          contentBlockStop
+                        )}\n\n`
+                      )
+                    );
+                    currentContentBlockIndex = -1;
+                  });
                 }
 
                 if (choice?.delta?.tool_calls && !isClosed && !hasFinished) {
@@ -595,13 +661,11 @@ export class AnthropicTransformer implements Transformer {
                       !toolCallIndexToContentBlockIndex.has(toolCallIndex);
 
                     if (isUnknownIndex) {
-                      const newContentBlockIndex = hasTextContentStarted
-                        ? toolCallIndexToContentBlockIndex.size + 1
-                        : toolCallIndexToContentBlockIndex.size;
-                      if (newContentBlockIndex !== 0) {
+                      // Close any previous content block if open
+                      if (currentContentBlockIndex >= 0) {
                         const contentBlockStop = {
                           type: "content_block_stop",
-                          index: contentIndex,
+                          index: currentContentBlockIndex,
                         };
                         safeEnqueue(
                           encoder.encode(
@@ -610,19 +674,22 @@ export class AnthropicTransformer implements Transformer {
                             )}\n\n`
                           )
                         );
-                        contentIndex++;
+                        currentContentBlockIndex = -1;
                       }
+
+                      const newContentBlockIndex = contentIndex;
                       toolCallIndexToContentBlockIndex.set(
                         toolCallIndex,
                         newContentBlockIndex
                       );
+                      contentIndex++; // Increment contentIndex after setting the mapping
                       const toolCallId =
                         toolCall.id || `call_${Date.now()}_${toolCallIndex}`;
                       const toolCallName =
                         toolCall.function?.name || `tool_${toolCallIndex}`;
                       const contentBlockStart = {
                         type: "content_block_start",
-                        index: contentIndex,
+                        index: newContentBlockIndex,
                         content_block: {
                           type: "tool_use",
                           id: toolCallId,
@@ -638,6 +705,7 @@ export class AnthropicTransformer implements Transformer {
                           )}\n\n`
                         )
                       );
+                      currentContentBlockIndex = newContentBlockIndex;
 
                       const toolCallInfo = {
                         id: toolCallId,
@@ -677,7 +745,7 @@ export class AnthropicTransformer implements Transformer {
                       try {
                         const anthropicChunk = {
                           type: "content_block_delta",
-                          index: contentIndex,
+                          index: blockIndex, // Use the correct content block index
                           delta: {
                             type: "input_json_delta",
                             partial_json: toolCall.function.arguments,
@@ -699,7 +767,7 @@ export class AnthropicTransformer implements Transformer {
 
                           const fixedChunk = {
                             type: "content_block_delta",
-                            index: contentIndex,
+                            index: blockIndex, // Use the correct content block index
                             delta: {
                               type: "input_json_delta",
                               partial_json: fixedArgument,
@@ -727,13 +795,11 @@ export class AnthropicTransformer implements Transformer {
                     );
                   }
 
-                  if (
-                    (hasTextContentStarted || toolCallChunks > 0) &&
-                    !isClosed
-                  ) {
+                  // Close any remaining open content block
+                  if (currentContentBlockIndex >= 0) {
                     const contentBlockStop = {
                       type: "content_block_stop",
-                      index: contentIndex,
+                      index: currentContentBlockIndex,
                     };
                     safeEnqueue(
                       encoder.encode(
@@ -742,10 +808,11 @@ export class AnthropicTransformer implements Transformer {
                         )}\n\n`
                       )
                     );
+                    currentContentBlockIndex = -1;
                   }
 
                   if (!isClosed) {
-                    const stopReasonMapping = {
+                    const stopReasonMapping: Record<string, string> = {
                       stop: "end_turn",
                       length: "max_tokens",
                       tool_calls: "tool_use",
@@ -810,90 +877,97 @@ export class AnthropicTransformer implements Transformer {
     openaiResponse: ChatCompletion
   ): any {
     this.logger.debug({ response: openaiResponse }, `Original OpenAI response`);
-
-    const choice = openaiResponse.choices[0];
-    if (!choice) {
-      throw new Error("No choices found in OpenAI response");
-    }
-    const content: any[] = [];
-    if (choice.message.annotations) {
-      const id = `srvtoolu_${uuidv4()}`;
-      content.push({
-        type: "server_tool_use",
-        id,
-        name: "web_search",
-        input: {
-          query: "",
-        },
-      });
-      content.push({
-        type: "web_search_tool_result",
-        tool_use_id: id,
-        content: choice.message.annotations.map((item) => {
-          return {
-            type: "web_search_result",
-            url: item.url_citation.url,
-            title: item.url_citation.title,
-          };
-        }),
-      });
-    }
-    if (choice.message.content) {
-      content.push({
-        type: "text",
-        text: choice.message.content,
-      });
-    }
-    if (choice.message.tool_calls && choice.message.tool_calls.length > 0) {
-      choice.message.tool_calls.forEach((toolCall, index) => {
-        let parsedInput = {};
-        try {
-          const argumentsStr = toolCall.function.arguments || "{}";
-
-          if (typeof argumentsStr === "object") {
-            parsedInput = argumentsStr;
-          } else if (typeof argumentsStr === "string") {
-            parsedInput = JSON.parse(argumentsStr);
-          }
-        } catch (parseError) {
-          parsedInput = { text: toolCall.function.arguments || "" };
-        }
-
+    try {
+      const choice = openaiResponse.choices[0];
+      if (!choice) {
+        throw new Error("No choices found in OpenAI response");
+      }
+      const content: any[] = [];
+      if (choice.message.annotations) {
+        const id = `srvtoolu_${uuidv4()}`;
         content.push({
-          type: "tool_use",
-          id: toolCall.id,
-          name: toolCall.function.name,
-          input: parsedInput,
+          type: "server_tool_use",
+          id,
+          name: "web_search",
+          input: {
+            query: "",
+          },
         });
-      });
-    }
+        content.push({
+          type: "web_search_tool_result",
+          tool_use_id: id,
+          content: choice.message.annotations.map((item) => {
+            return {
+              type: "web_search_result",
+              url: item.url_citation.url,
+              title: item.url_citation.title,
+            };
+          }),
+        });
+      }
+      if (choice.message.content) {
+        content.push({
+          type: "text",
+          text: choice.message.content,
+        });
+      }
+      if (choice.message.tool_calls && choice.message.tool_calls.length > 0) {
+        choice.message.tool_calls.forEach((toolCall, index) => {
+          let parsedInput = {};
+          try {
+            const argumentsStr = toolCall.function.arguments || "{}";
 
-    const result = {
-      id: openaiResponse.id,
-      type: "message",
-      role: "assistant",
-      model: openaiResponse.model,
-      content: content,
-      stop_reason:
-        choice.finish_reason === "stop"
-          ? "end_turn"
-          : choice.finish_reason === "length"
-          ? "max_tokens"
-          : choice.finish_reason === "tool_calls"
-          ? "tool_use"
-          : choice.finish_reason === "content_filter"
-          ? "stop_sequence"
-          : "end_turn",
-      stop_sequence: null,
-      usage: {
-        input_tokens: openaiResponse.usage?.prompt_tokens || 0,
-        output_tokens: openaiResponse.usage?.completion_tokens || 0,
-      },
-    };
-    this.logger.debug(
-      { result },
-      `Conversion complete, final Anthropic response`
-    );
-    return result;
+            if (typeof argumentsStr === "object") {
+              parsedInput = argumentsStr;
+            } else if (typeof argumentsStr === "string") {
+              parsedInput = JSON.parse(argumentsStr);
+            }
+          } catch (parseError) {
+            parsedInput = { text: toolCall.function.arguments || "" };
+          }
+
+          content.push({
+            type: "tool_use",
+            id: toolCall.id,
+            name: toolCall.function.name,
+            input: parsedInput,
+          });
+        });
+      }
+
+      const result = {
+        id: openaiResponse.id,
+        type: "message",
+        role: "assistant",
+        model: openaiResponse.model,
+        content: content,
+        stop_reason:
+          choice.finish_reason === "stop"
+            ? "end_turn"
+            : choice.finish_reason === "length"
+            ? "max_tokens"
+            : choice.finish_reason === "tool_calls"
+            ? "tool_use"
+            : choice.finish_reason === "content_filter"
+            ? "stop_sequence"
+            : "end_turn",
+        stop_sequence: null,
+        usage: {
+          input_tokens: openaiResponse.usage?.prompt_tokens || 0,
+          output_tokens: openaiResponse.usage?.completion_tokens || 0,
+        },
+      };
+      this.logger.debug(
+        { result },
+        `Conversion complete, final Anthropic response`
+      );
+      return result;
+    } catch (e) {
+      throw createApiError(
+        `Provider error: ${JSON.stringify(openaiResponse)}`,
+        500,
+        "provider_error"
+      );
+    }
   }
 }

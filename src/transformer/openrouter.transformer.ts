@@ -345,7 +345,7 @@ export class OpenrouterTransformer implements Transformer {
         status: response.status,
         statusText: response.statusText,
         headers: {
-          "Content-Type": response.headers.get("Content-Type") || "text/plain",
+          "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           Connection: "keep-alive",
         },

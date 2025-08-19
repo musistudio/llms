@@ -183,9 +183,9 @@ async function sendRequestToProvider(
       if (auth.config?.headers) {
         headers = {
           ...headers,
-          host: undefined,
           ...auth.config.headers,
         };
+        delete headers.host;
         delete auth.config.headers;
       }
       config = {
@@ -217,7 +217,7 @@ async function sendRequestToProvider(
   if (!response.ok) {
     const errorText = await response.text();
     throw createApiError(
-      `Error from provider(${response.status}): ${errorText}`,
+      `Error from provider(${provider.name},${requestBody.model}: ${response.status}): ${errorText}`,
       response.status,
       "provider_response_error"
     );

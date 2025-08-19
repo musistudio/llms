@@ -246,7 +246,7 @@ export function buildRequestBody(
       return {
         name: tool.function.name,
         description: tool.function.description,
-        parameters: tool.function.parameters,
+        parametersJsonSchema: tool.function.parameters,
       };
     });
   if (functionDeclarations?.length) {

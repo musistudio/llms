@@ -12,7 +12,9 @@ export function sendUnifiedRequest(
   });
   if (config.headers) {
     Object.entries(config.headers).forEach(([key, value]) => {
-      headers.set(key, value as string);
+      if (value) {
+        headers.set(key, value as string);
+      }
     });
   }
   let combinedSignal: AbortSignal;
@@ -43,6 +45,7 @@ export function sendUnifiedRequest(
   logger?.debug(
     {
       request: fetchOptions,
+      headers: Object.fromEntries(headers.entries()),
       requestUrl: typeof url === "string" ? url : url.toString(),
       useProxy: config.httpsProxy,
     },

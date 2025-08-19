@@ -3,6 +3,7 @@ import { Transformer } from "@/types/transformer";
 
 export class OpenAITransformer implements Transformer {
   static TransformerName = "openai";
+  name = "openai";
 
   constructor() {}
 

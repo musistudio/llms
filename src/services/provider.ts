@@ -8,6 +8,7 @@ import {
 } from "../types/llm";
 import { ConfigService } from "./config";
 import { TransformerService } from "./transformer";
+import { resolveEnvVars, redactApiKey } from "@/utils/env-resolver";
 
 export class ProviderService {
   private providers: Map<string, LLMProvider> = new Map();
@@ -83,15 +84,21 @@ export class ProviderService {
           })
         }
 
+        // Resolve environment variables in API key
+        const resolvedApiKey = resolveEnvVars(providerConfig.api_key, {
+          resolveEnvVariables: true,
+          throwOnMissing: true
+        });
+
         this.registerProvider({
           name: providerConfig.name,
           baseUrl: providerConfig.api_base_url,
-          apiKey: providerConfig.api_key,
+          apiKey: resolvedApiKey,
           models: providerConfig.models || [],
           transformer: providerConfig.transformer ? transformer : undefined,
         });
 
-        this.logger.info(`${providerConfig.name} provider registered`);
+        this.logger.info(`${providerConfig.name} provider registered with API key: ${redactApiKey(resolvedApiKey)}`);
       } catch (error) {
         this.logger.error(`${providerConfig.name} provider registered error: ${error}`);
       }

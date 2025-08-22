@@ -51,5 +51,22 @@ export function sendUnifiedRequest(
     },
     "final request"
   );
+
+  // CRITICAL DEBUG: Log actual HTTP body being sent
+  const actualHttpBody = JSON.stringify(request);
+  console.log("[HTTP EGRESS DEBUG] ACTUAL REQUEST BODY BEING SENT:", actualHttpBody);
+  console.log("[HTTP EGRESS DEBUG] REQUEST OBJECT KEYS:", Object.keys(request));
+  console.log("[HTTP EGRESS DEBUG] HAS REASONING PARAM:", 'reasoning' in request);
+  console.log("[HTTP EGRESS DEBUG] HAS REASONING_EFFORT PARAM:", 'reasoning_effort' in request);
+  
+  // GPT-5 Reasoning Parameter Assertion
+  if ('reasoning' in request && request.model && !/^(o3|o4|gpt-5)/.test(request.model)) {
+    console.error("[REASONING ASSERTION FAILED] Reasoning parameter found on non-reasoning model!");
+    console.error("[REASONING ASSERTION] Model:", request.model);
+    console.error("[REASONING ASSERTION] Reasoning param:", request.reasoning);
+    console.trace("[REASONING ASSERTION] Stack trace:");
+    // Don't throw, just log the violation for now
+  }
+
   return fetch(typeof url === "string" ? url : url.toString(), fetchOptions);
 }

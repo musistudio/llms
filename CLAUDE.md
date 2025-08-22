@@ -237,22 +237,23 @@ This server has **complete support for GPT-5 and o3 models** through OpenAI's Ch
 5. **Tool Schema Cleaning**: Rejects JSON schema metadata (`$schema`, `additionalProperties`) in tool parameters
 
 **API Response Differences:**
-- **Reasoning Tokens**: GPT-5 includes significant `reasoning_tokens` in usage (often 1000+ vs 300 for GPT-4)  
+- **Reasoning Tokens**: GPT-5 includes significant `reasoning_tokens` in usage (often 2000+ vs 500 for o3/o4-mini)  
 - **Reasoning Content**: Available inline during streaming via `reasoning_content` field
 - **Model ID**: Returns `gpt-5-2025-08-07` instead of requested model names
-- **Error Sensitivity**: Stricter validation, more "Unknown parameter" errors than GPT-4
+- **Error Sensitivity**: Stricter validation than earlier 2025 models (o3, o4-mini)
 
 **Working Solutions Implemented:**
 - OpenAI transformer auto-converts `max_tokens` → `max_completion_tokens`
 - Reasoning transformer handles all parameter format conversions
 - Tool format cleaner removes problematic JSON schema fields
-- Parameter validation prevents invalid verbosity/temperature values
+- Parameter validation ensures API compliance with latest requirements
 
-**Breaking Changes from GPT-4:**
-- Legacy `reasoning: {max_tokens: X}` format completely unsupported
-- `temperature != 1` silently ignored (not rejected, just ignored)
-- Tool calls have 50% fewer errors but stricter input validation
-- Reasoning responses can timeout due to increased thinking time
+**Evolution from Earlier 2025 Models:**
+- **vs o3/o4-mini**: GPT-5 uses unified architecture vs specialized reasoning focus
+- **Parameter Changes**: New `reasoning_effort` format vs o3's reasoning approach
+- **Tool Integration**: GPT-5 supports agentic tool use vs o3's limited tool capabilities  
+- **Performance**: 50-80% fewer tokens for same quality vs o3, 6x fewer hallucinations
+- **Timeout Behavior**: Reasoning responses can take longer due to enhanced thinking depth
 - **Parameter Transformation**: Automatic conversion of `max_tokens` → `max_completion_tokens` for GPT-5 models
 - **Tool Format Conversion**: OpenAI transformer converts Anthropic tool format to OpenAI function format
 - **Reasoning Token Support**: GPT-5 reasoning tokens are generated and counted in usage statistics

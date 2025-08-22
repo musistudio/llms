@@ -149,6 +149,14 @@ npm install -g yalc
 ```
 
 ### Development Workflow
+
+**Automated Script (Recommended):**
+```bash
+# In llms-dev: Use convenience script for rapid iteration
+./dev-workflow.sh   # Builds, publishes to yalc, and pushes to all linked projects
+```
+
+**Manual Steps:**
 ```bash
 # In llms-dev: Publish to yalc
 yalc publish
@@ -160,6 +168,10 @@ npm run build
 # After making changes in llms-dev: Push updates
 yalc push  # Automatically updates all linked projects
 ```
+
+**Convenience Scripts:**
+- `./dev-workflow.sh` (LLMS): Complete build → yalc publish → push workflow
+- `./build-and-test.sh` (CCR): Build CCR with updated LLMS package and show status
 
 ### Benefits over npm pack/install
 - **No npm cache issues**: Direct symlinks avoid cache corruption

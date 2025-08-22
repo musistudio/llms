@@ -226,6 +226,33 @@ This server has **complete support for GPT-5 and o3 models** through OpenAI's Ch
 ### ✅ Implementation Details
 - **OpenAI Chat Completions API**: Uses standard `/v1/chat/completions` endpoint
 - **Automatic Model Mapping**: OpenAI automatically serves GPT-5 for all model requests (GPT-4o, GPT-4, etc. all resolve to GPT-5)
+
+### 🔧 GPT-5 API Quirks & Critical Fixes
+
+**Parameter Compatibility Issues:**
+1. **max_tokens → max_completion_tokens**: GPT-5 requires `max_completion_tokens` instead of legacy `max_tokens`
+2. **Temperature Restrictions**: GPT-5 only supports `temperature: 1` (default), rejects other values
+3. **Reasoning Format**: Only accepts `reasoning_effort: "minimal|low|medium|high"`, rejects object formats
+4. **Verbosity Validation**: Strictly validates `verbosity: "low|medium|high"`, rejects invalid values
+5. **Tool Schema Cleaning**: Rejects JSON schema metadata (`$schema`, `additionalProperties`) in tool parameters
+
+**API Response Differences:**
+- **Reasoning Tokens**: GPT-5 includes significant `reasoning_tokens` in usage (often 1000+ vs 300 for GPT-4)  
+- **Reasoning Content**: Available inline during streaming via `reasoning_content` field
+- **Model ID**: Returns `gpt-5-2025-08-07` instead of requested model names
+- **Error Sensitivity**: Stricter validation, more "Unknown parameter" errors than GPT-4
+
+**Working Solutions Implemented:**
+- OpenAI transformer auto-converts `max_tokens` → `max_completion_tokens`
+- Reasoning transformer handles all parameter format conversions
+- Tool format cleaner removes problematic JSON schema fields
+- Parameter validation prevents invalid verbosity/temperature values
+
+**Breaking Changes from GPT-4:**
+- Legacy `reasoning: {max_tokens: X}` format completely unsupported
+- `temperature != 1` silently ignored (not rejected, just ignored)
+- Tool calls have 50% fewer errors but stricter input validation
+- Reasoning responses can timeout due to increased thinking time
 - **Parameter Transformation**: Automatic conversion of `max_tokens` → `max_completion_tokens` for GPT-5 models
 - **Tool Format Conversion**: OpenAI transformer converts Anthropic tool format to OpenAI function format
 - **Reasoning Token Support**: GPT-5 reasoning tokens are generated and counted in usage statistics

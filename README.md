@@ -36,7 +36,9 @@ The LLM API transformation server acts as a middleware to standardize requests a
 
 ### Example Transformers
 
-- **Anthropic**: Converts between OpenAI-style and Anthropic-style message formats.
+- **Anthropic**: Converts between OpenAI-style and Anthropic-style message formats. Handles thinking parameters.
+- **OpenAI**: Handles GPT-5 API transformations including parameter conversion and reasoning format handling.
+- **Reasoning**: Processes reasoning parameters, converting token budgets to effort levels for GPT-5/o3 models.
 - **Gemini**: Adjusts tool definitions and parameter formats for Gemini compatibility.
 - **Deepseek**: Enforces token limits and handles reasoning content in streams.
 

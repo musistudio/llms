@@ -106,19 +106,19 @@ async function processRequestTransformers(
     for (const providerTransformer of provider.transformer.use) {
       if (
         !providerTransformer ||
-        typeof providerTransformer.transformRequestIn !== "function"
+        typeof providerTransformer.transformRequestOut !== "function"
       ) {
         continue;
       }
-      const transformIn = await providerTransformer.transformRequestIn(
+      const transformOut = await providerTransformer.transformRequestOut(
         requestBody,
         provider
       );
-      if (transformIn.body) {
-        requestBody = transformIn.body;
-        config = { ...config, ...transformIn.config };
+      if (transformOut.body) {
+        requestBody = transformOut.body;
+        config = { ...config, ...transformOut.config };
       } else {
-        requestBody = transformIn;
+        requestBody = transformOut;
       }
     }
   }

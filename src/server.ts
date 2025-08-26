@@ -183,12 +183,3 @@ class Server {
 
 // Export for external use
 export default Server;
-
-// Start server if this file is run directly
-if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('server.ts')) {
-  const server = new Server({jsonPath: "./config.json"});
-  server.start().catch((error) => {
-    console.error("Failed to start server:", error);
-    process.exit(1);
-  });
-}

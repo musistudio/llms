@@ -413,6 +413,9 @@ export class AnthropicTransformer implements Transformer {
                 }
 
                 const choice = chunk.choices?.[0];
+                if(!chunk.usage) {
+                  chunk.usage = choice?.usage;
+                }
                 if (chunk.usage) {
                   if (!stopReasonMessageDelta) {
                     stopReasonMessageDelta = {

@@ -30,6 +30,20 @@ export class AnthropicTransformer implements Transformer {
       headers["authorization"] = undefined;
     }
 
+    // 设置 user-agent 逻辑：
+    // 1. 如果 options 中有 userAgent，使用它
+    // 2. 如果没有，检查原始请求中是否已有 user-agent，如果有则保持不变
+    // 3. 如果都没有，使用默认值 "claude-cli/1.0.98 (external, cli)"
+    if (this.options?.userAgent) {
+      headers["user-agent"] = this.options.userAgent;
+    } else if (request.headers?.["user-agent"]) {
+      headers["user-agent"] = request.headers["user-agent"];
+    } else if (request.headers?.["User-Agent"]) {
+      headers["user-agent"] = request.headers["User-Agent"];
+    } else {
+      headers["user-agent"] = "claude-cli/1.0.98 (external, cli)";
+    }
+
     return {
       body: request,
       config: {

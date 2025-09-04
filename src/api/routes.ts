@@ -37,7 +37,10 @@ async function handleTransformerEndpoint(
     body,
     provider,
     transformer,
-    req.headers
+    req.headers,
+    {
+      req
+    }
   );
 
   // 发送请求到LLM提供者
@@ -56,7 +59,10 @@ async function handleTransformerEndpoint(
     response,
     provider,
     transformer,
-    bypass
+    bypass,
+    {
+      req,
+    }
   );
 
   // 格式化并返回响应
@@ -72,7 +78,8 @@ async function processRequestTransformers(
   body: any,
   provider: any,
   transformer: any,
-  headers: any
+  headers: any,
+  context: any,
 ) {
   let requestBody = body;
   let config = {};
@@ -112,7 +119,8 @@ async function processRequestTransformers(
       }
       const transformIn = await providerTransformer.transformRequestIn(
         requestBody,
-        provider
+        provider,
+        context
       );
       if (transformIn.body) {
         requestBody = transformIn.body;
@@ -134,7 +142,8 @@ async function processRequestTransformers(
       }
       requestBody = await modelTransformer.transformRequestIn(
         requestBody,
-        provider
+        provider,
+        context
       );
     }
   }
@@ -235,7 +244,8 @@ async function processResponseTransformers(
   response: any,
   provider: any,
   transformer: any,
-  bypass: boolean
+  bypass: boolean,
+  context: any
 ) {
   let finalResponse = response;
 
@@ -251,7 +261,8 @@ async function processResponseTransformers(
         continue;
       }
       finalResponse = await providerTransformer.transformResponseOut(
-        finalResponse
+        finalResponse,
+        context
       );
     }
   }
@@ -268,14 +279,18 @@ async function processResponseTransformers(
         continue;
       }
       finalResponse = await modelTransformer.transformResponseOut(
-        finalResponse
+        finalResponse,
+        context
       );
     }
   }
 
   // 执行transformer的transformResponseIn方法
   if (!bypass && transformer.transformResponseIn) {
-    finalResponse = await transformer.transformResponseIn(finalResponse);
+    finalResponse = await transformer.transformResponseIn(
+      finalResponse,
+      context
+    );
   }
 
   return finalResponse;

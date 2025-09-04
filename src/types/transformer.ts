@@ -24,18 +24,19 @@ export interface TransformerContext {
 export type Transformer = {
   transformRequestIn?: (
     request: UnifiedChatRequest,
-    provider: LLMProvider
+    provider: LLMProvider,
+    context: TransformerContext,
   ) => Promise<Record<string, any>>;
   transformResponseIn?: (response: Response, context?: TransformerContext) => Promise<Response>;
 
   // 将请求格式转换为通用的格式
-  transformRequestOut?: (request: any) => Promise<UnifiedChatRequest>;
+  transformRequestOut?: (request: any, context: TransformerContext) => Promise<UnifiedChatRequest>;
   // 将相应格式转换为通用的格式
-  transformResponseOut?: (response: Response) => Promise<Response>;
+  transformResponseOut?: (response: Response, context: TransformerContext) => Promise<Response>;
 
   endPoint?: string;
   name?: string;
-  auth?: (request: any, provider: LLMProvider) => Promise<any>;
+  auth?: (request: any, provider: LLMProvider, context: TransformerContext) => Promise<any>;
   
   // Logger for transformer
   logger?: any;

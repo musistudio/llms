@@ -2,7 +2,7 @@ import { UnifiedChatRequest } from "../types/llm";
 import { Transformer, TransformerOptions } from "../types/transformer";
 
 export class SamplingTransformer implements Transformer {
-  name = "sampling";
+  static TransformerName = "sampling";
 
   max_tokens: number;
   temperature: number;

@@ -5,7 +5,11 @@ import {
   UnifiedMessage,
   UnifiedTool,
 } from "@/types/llm";
-import { Transformer, TransformerContext, TransformerOptions } from "@/types/transformer";
+import {
+  Transformer,
+  TransformerContext,
+  TransformerOptions,
+} from "@/types/transformer";
 import { v4 as uuidv4 } from "uuid";
 import { getThinkLevel } from "@/utils/thinking";
 import { createApiError } from "@/api/middleware";
@@ -130,7 +134,7 @@ export class AnthropicTransformer implements Transformer {
           } else if (msg.role === "assistant") {
             const assistantMessage: UnifiedMessage = {
               role: "assistant",
-              content: '',
+              content: "",
             };
             const textParts = msg.content.filter(
               (c: any) => c.type === "text" && c.text
@@ -952,7 +956,13 @@ export class AnthropicTransformer implements Transformer {
           });
         });
       }
-
+      if (choice.message?.thinking?.content) {
+        content.push({
+          type: "thinking",
+          thinking: choice.message.thinking.content,
+          signature: choice.message.thinking.signature,
+        });
+      }
       const result = {
         id: openaiResponse.id,
         type: "message",

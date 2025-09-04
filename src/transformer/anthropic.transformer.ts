@@ -22,7 +22,7 @@ export class AnthropicTransformer implements Transformer {
   private userAgent: string;
 
   constructor(private readonly options?: TransformerOptions) {
-    this.useBearer = this.options?.UseBearer ?? false;
+    this.useBearer = this.options?.useBearer ?? false;
     this.userAgent = this.options?.userAgent ?? "";
   }
 
@@ -39,8 +39,8 @@ export class AnthropicTransformer implements Transformer {
 
     // 设置 user-agent 逻辑：
     // 1. 如果 options 中有 userAgent，使用它
-    if (this.options?.userAgent) {
-      headers["user-agent"] = this.options.userAgent;
+    if (this.userAgent !== "") {
+      headers["user-agent"] = this.userAgent;
     }
     return {
       body: request,

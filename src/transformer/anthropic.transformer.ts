@@ -19,9 +19,11 @@ export class AnthropicTransformer implements Transformer {
   endPoint = "/v1/messages";
   static TransformerName = "Anthropic";
   private useBearer: boolean;
+  private userAgent: string;
 
   constructor(private readonly options?: TransformerOptions) {
     this.useBearer = this.options?.UseBearer ?? false;
+    this.userAgent = this.options?.userAgent ?? "";
   }
 
   async auth(request: any, provider: LLMProvider): Promise<any> {

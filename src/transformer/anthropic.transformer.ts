@@ -13,6 +13,7 @@ import { createApiError } from "@/api/middleware";
 export class AnthropicTransformer implements Transformer {
   name = "Anthropic";
   endPoint = "/v1/messages";
+  static TransformerName = "Anthropic";
   private useBearer: boolean;
 
   constructor(private readonly options?: TransformerOptions) {

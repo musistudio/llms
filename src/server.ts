@@ -45,6 +45,7 @@ declare module "fastify" {
 interface ServerOptions {
   initialConfig?: AppConfig;
   logger?: boolean | PinoLoggerOptions;
+  shutdownOnFatal?: boolean;
 }
 
 // Application factory
@@ -70,6 +71,7 @@ class Server {
   providerService!: ProviderService;
   transformerService: TransformerService;
   private initializationPromise: Promise<void>;
+  private readonly shutdownOnFatal: boolean;
 
   constructor(options: ServerOptions = {}) {
     this.app = createApp(options.logger ?? true);
@@ -78,6 +80,7 @@ class Server {
       this.configService,
       this.app.log
     );
+    this.shutdownOnFatal = options.shutdownOnFatal ?? false;
     this.initializationPromise = this.transformerService.initialize().then(() => {
       this.providerService = new ProviderService(
         this.configService,
@@ -208,10 +211,18 @@ class Server {
         try {
           await this.app.close();
           this.app.log.info("Server closed gracefully.");
-          process.exit(1);
+          if (this.shutdownOnFatal) {
+            process.exit(1);
+          } else {
+            this.app.log.warn(
+              "Process exit suppressed after fatal event; caller is responsible for lifecycle management."
+            );
+          }
         } catch (err) {
           this.app.log.error({ err: err instanceof Error ? err : new Error(String(err)) }, "Error during graceful shutdown");
-          process.exit(1);
+          if (this.shutdownOnFatal) {
+            process.exit(1);
+          }
         }
       };
 

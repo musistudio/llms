@@ -9,24 +9,101 @@ export class ReasoningTransformer implements Transformer {
     this.enable = this.options?.enable ?? true;
   }
 
-  async transformRequestIn(
+  async transformRequestOut(
     request: UnifiedChatRequest
   ): Promise<UnifiedChatRequest> {
     if (!this.enable) {
-      request.thinking = {
-        type: "disabled",
-        budget_tokens: -1,
-      };
-      request.enable_thinking = false;
       return request;
     }
-    if (request.reasoning) {
-      request.thinking = {
-        type: "enabled",
-        budget_tokens: request.reasoning.max_tokens,
-      };
-      request.enable_thinking = true;
+    
+    // Extract inline tokens from user messages and map to parameters
+    if (request.messages) {
+      const lastMessage = request.messages[request.messages.length - 1];
+      if (lastMessage?.role === 'user' && typeof lastMessage.content === 'string') {
+        const content = lastMessage.content;
+        
+        // Check for inline tokens at start of prompt
+        const tokenMap = {
+          'Quick:': { effort: 'low', verbosity: 'low' },
+          'Deep:': { effort: 'high', verbosity: 'medium' },
+          'Explain:': { effort: 'medium', verbosity: 'high' },
+          'Brief:': { effort: 'medium', verbosity: 'low' }
+        };
+        
+        // Check for hashtag tokens anywhere in prompt
+        const hashtagMap = {
+          '#quick': { effort: 'low', verbosity: 'low' },
+          '#deep': { effort: 'high', verbosity: 'medium' },
+          '#explain': { effort: 'medium', verbosity: 'high' },
+          '#brief': { effort: 'medium', verbosity: 'low' }
+        };
+        
+        let updatedContent = content;
+        let foundToken = false;
+        
+        // Process prefix tokens (strip from beginning)
+        for (const [token, params] of Object.entries(tokenMap)) {
+          if (content.startsWith(token)) {
+            if (!request.reasoning_effort) request.reasoning_effort = params.effort;
+            if (!request.verbosity) request.verbosity = params.verbosity;
+            updatedContent = content.substring(token.length).trim();
+            foundToken = true;
+            this.logger?.info({ token, params }, 'Applied reasoning token from prompt prefix');
+            break;
+          }
+        }
+        
+        // Process hashtag tokens (strip from anywhere)
+        for (const [hashtag, params] of Object.entries(hashtagMap)) {
+          if (content.includes(hashtag)) {
+            if (!request.reasoning_effort) request.reasoning_effort = params.effort;
+            if (!request.verbosity) request.verbosity = params.verbosity;
+            updatedContent = updatedContent.replace(hashtag, '').trim();
+            foundToken = true;
+            this.logger?.info({ hashtag, params }, 'Applied reasoning hashtag from prompt');
+            break;
+          }
+        }
+        
+        // Update message content if we found and stripped tokens
+        if (foundToken) {
+          lastMessage.content = updatedContent;
+        }
+      }
     }
+    
+    
+    // Convert Anthropic-style thinking to OpenAI reasoning.effort format
+    if (request.thinking?.type === "enabled" || request.enable_thinking) {
+      request.reasoning_effort = "medium"; // Default to medium effort
+      // Clean up Anthropic thinking properties
+      delete request.thinking;
+      delete request.enable_thinking;
+    }
+    
+    // Handle direct reasoning parameter from client (e.g., Claude Code)
+    if (request.reasoning && typeof request.reasoning === 'object') {
+      // If it has max_tokens (old format), convert to effort format
+      if ('max_tokens' in request.reasoning) {
+        const maxTokens = request.reasoning.max_tokens;
+        // Map token budget to effort level
+        const effort = maxTokens > 1000 ? "high" : maxTokens > 500 ? "medium" : "minimal";
+        request.reasoning_effort = effort;
+      }
+      // If it already has effort, convert to flat format
+      else if ('effort' in request.reasoning) {
+        request.reasoning_effort = request.reasoning.effort;
+      }
+      // If it has some other format, remove it entirely to avoid API error
+      else {
+        delete request.reasoning;
+      }
+      
+      // Always remove the old reasoning object after processing
+      delete request.reasoning;
+    }
+    
+    
     return request;
   }
 
@@ -34,7 +111,62 @@ export class ReasoningTransformer implements Transformer {
     if (!this.enable) return response;
     if (response.headers.get("Content-Type")?.includes("application/json")) {
       const jsonResponse = await response.json();
-      // Handle non-streaming response if needed
+      
+      // Debug: Log response structure using Fastify logger
+      this.logger?.info({
+        responseKeys: Object.keys(jsonResponse),
+        messageKeys: jsonResponse.choices?.[0]?.message ? Object.keys(jsonResponse.choices[0].message) : 'none',
+        hasReasoning: !!jsonResponse.choices?.[0]?.message?.reasoning,
+        hasReasoningContent: !!jsonResponse.choices?.[0]?.message?.reasoning_content,
+        reasoningTokens: jsonResponse.usage?.completion_tokens_details?.reasoning_tokens,
+        model: jsonResponse.model
+      }, 'REASONING TRANSFORMER RESPONSE DEBUG');
+      
+      // Handle non-streaming response with reasoning content (GPT-5 format)
+      const message = jsonResponse.choices?.[0]?.message;
+      const reasoningContent = message?.reasoning_content || message?.reasoning;
+      
+      if (reasoningContent) {
+        // Convert to Anthropic thinking format
+        const thinkingResponse = {
+          ...jsonResponse,
+          choices: [
+            {
+              ...jsonResponse.choices[0],
+              message: {
+                ...message,
+                content: [
+                  {
+                    type: "thinking",
+                    content: reasoningContent
+                  },
+                  {
+                    type: "text", 
+                    text: message.content || ""
+                  }
+                ]
+              }
+            }
+          ]
+        };
+        
+        // Remove original reasoning fields
+        delete thinkingResponse.choices[0].message.reasoning;
+        delete thinkingResponse.choices[0].message.reasoning_content;
+        
+        this.logger?.info({
+          reasoningLength: reasoningContent.length,
+          convertedToThinking: true,
+          model: jsonResponse.model
+        }, "✅ REASONING CONTENT EXTRACTED AND CONVERTED TO THINKING FORMAT");
+        
+        return new Response(JSON.stringify(thinkingResponse), {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        });
+      }
+      
       return new Response(JSON.stringify(jsonResponse), {
         status: response.status,
         statusText: response.statusText,

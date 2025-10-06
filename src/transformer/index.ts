@@ -17,6 +17,7 @@ import { StreamOptionsTransformer } from "./streamoptions.transformer";
 import { OpenAITransformer } from "./openai.transformer";
 import { CustomParamsTransformer } from "./customparams.transformer";
 import { VercelTransformer } from "./vercel.transformer";
+import { OpenAIResponsesTransformer } from "./openai.responses.transformer";
 
 export default {
   AnthropicTransformer,
@@ -37,5 +38,6 @@ export default {
   CerebrasTransformer,
   StreamOptionsTransformer,
   CustomParamsTransformer,
-  VercelTransformer
+  VercelTransformer,
+  OpenAIResponsesTransformer
 };

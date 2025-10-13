@@ -16,8 +16,8 @@ import { createApiError } from "@/api/middleware";
 import { formatBase64 } from "@/utils/image";
 
 export class AnthropicTransformer implements Transformer {
-  name = "Anthropic";
-  endPoint = "/v1/messages";
+  static TransformerName = "Anthropic";
+  static endPoint = "/v1/messages";
   private useBearer: boolean;
 
   constructor(private readonly options?: TransformerOptions) {
@@ -283,7 +283,7 @@ export class AnthropicTransformer implements Transformer {
                 this.logger.debug(
                   {
                     reqId: context.req.id,
-                    error: error.message, 
+                    error: error.message,
                     type: 'send data error'
                   }
                 );

@@ -34,7 +34,44 @@ export class ReasoningTransformer implements Transformer {
     if (!this.enable) return response;
     if (response.headers.get("Content-Type")?.includes("application/json")) {
       const jsonResponse = await response.json();
-      // Handle non-streaming response if needed
+      
+      // Handle non-streaming response with reasoning content
+      if (jsonResponse.choices?.[0]?.message?.reasoning) {
+        const reasoningContent = jsonResponse.choices[0].message.reasoning;
+        
+        // Convert to Anthropic thinking format
+        const thinkingResponse = {
+          ...jsonResponse,
+          choices: [
+            {
+              ...jsonResponse.choices[0],
+              message: {
+                ...jsonResponse.choices[0].message,
+                content: [
+                  {
+                    type: "thinking",
+                    content: reasoningContent
+                  },
+                  {
+                    type: "text", 
+                    text: jsonResponse.choices[0].message.content || ""
+                  }
+                ]
+              }
+            }
+          ]
+        };
+        
+        // Remove original reasoning field
+        delete thinkingResponse.choices[0].message.reasoning;
+        
+        return new Response(JSON.stringify(thinkingResponse), {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        });
+      }
+      
       return new Response(JSON.stringify(jsonResponse), {
         status: response.status,
         statusText: response.statusText,

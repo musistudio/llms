@@ -9,3 +9,4 @@ node_modules
 config.json
 .idea
 .cursor
+.claude/settings.local.json

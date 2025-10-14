@@ -16,8 +16,8 @@ import { createApiError } from "@/api/middleware";
 import { formatBase64 } from "@/utils/image";
 
 export class AnthropicTransformer implements Transformer {
-  static TransformerName = "Anthropic";
-  static endPoint = "/v1/messages";
+  name = "Anthropic";
+  endPoint = "/v1/messages";
   private useBearer: boolean;
 
   constructor(private readonly options?: TransformerOptions) {

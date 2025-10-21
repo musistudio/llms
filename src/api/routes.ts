@@ -8,6 +8,7 @@ import { RegisterProviderRequest, LLMProvider } from "@/types/llm";
 import { sendUnifiedRequest } from "@/utils/request";
 import { createApiError } from "./middleware";
 import { version } from "../../package.json";
+import { extractForwardableHeaders, getForwardHeadersFromConfig } from "@/utils/headerExtractor";
 
 /**
  * 处理transformer端点的主函数
@@ -39,7 +40,8 @@ async function handleTransformerEndpoint(
     transformer,
     req.headers,
     {
-      req
+      req,
+      fastify
     }
   );
 
@@ -91,6 +93,14 @@ async function processRequestTransformers(
   // 检查是否应该跳过转换器（透传参数）
   bypass = shouldBypassTransformers(provider, transformer, body);
 
+  // 提取客户端 headers（用于转发）
+  // 从配置中获取自定义的 FORWARD_HEADERS
+  const customForwardHeaders = context?.fastify?._server?.configService.getAll();
+  const forwardHeadersList = getForwardHeadersFromConfig(customForwardHeaders);
+  const clientHeaders = headers 
+    ? extractForwardableHeaders(headers, forwardHeadersList)
+    : {};
+
   if (bypass) {
     if (headers instanceof Headers) {
       headers.delete("content-length");
@@ -98,6 +108,9 @@ async function processRequestTransformers(
       delete headers["content-length"];
     }
     config.headers = headers;
+  } else {
+    // 将客户端 headers 作为基础（优先级最低）
+    config.headers = { ...clientHeaders };
   }
 
   // 执行transformer的transformRequestOut方法

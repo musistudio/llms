@@ -489,20 +489,20 @@ export class AnthropicTransformer implements Transformer {
 
                 if (choice?.delta?.thinking && !isClosed && !hasFinished) {
                   // Close any previous content block if open
-                  if (currentContentBlockIndex >= 0) {
-                    const contentBlockStop = {
-                      type: "content_block_stop",
-                      index: currentContentBlockIndex,
-                    };
-                    safeEnqueue(
-                      encoder.encode(
-                        `event: content_block_stop\ndata: ${JSON.stringify(
-                          contentBlockStop
-                        )}\n\n`
-                      )
-                    );
-                    currentContentBlockIndex = -1;
-                  }
+                  // if (currentContentBlockIndex >= 0) {
+                  //   const contentBlockStop = {
+                  //     type: "content_block_stop",
+                  //     index: currentContentBlockIndex,
+                  //   };
+                  //   safeEnqueue(
+                  //     encoder.encode(
+                  //       `event: content_block_stop\ndata: ${JSON.stringify(
+                  //         contentBlockStop
+                  //       )}\n\n`
+                  //     )
+                  //   );
+                  //   currentContentBlockIndex = -1;
+                  // }
 
                   if (!isThinkingStarted) {
                     const contentBlockStart = {

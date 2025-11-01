@@ -1,5 +1,63 @@
-import { UnifiedChatRequest } from "@/types/llm";
+import { UnifiedChatRequest, MessageContent } from "@/types/llm";
 import { Transformer } from "@/types/transformer";
+
+interface ResponsesAPIOutputItem {
+  type: string;
+  id?: string;
+  call_id?: string;
+  name?: string;
+  arguments?: string;
+  content?: Array<{
+    type: string;
+    text?: string;
+    image_url?: string;
+    mime_type?: string;
+    image_base64?: string;
+  }>;
+}
+
+interface ResponsesAPIPayload {
+  id: string;
+  object: string;
+  model: string;
+  created_at: number;
+  output: ResponsesAPIOutputItem[];
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+  };
+}
+
+interface ResponsesStreamEvent {
+  type: string;
+  item_id?: string;
+  output_index?: number;
+  delta?: string | {
+    url?: string;
+    b64_json?: string;
+    mime_type?: string;
+  };
+  item?: {
+    id?: string;
+    type?: string;
+    call_id?: string;
+    name?: string;
+    content?: Array<{
+      type: string;
+      text?: string;
+      image_url?: string;
+      mime_type?: string;
+    }>;
+  };
+  response?: {
+    id?: string;
+    model?: string;
+    output?: Array<{
+      type: string;
+    }>;
+  };
+}
 
 export class OpenAIResponsesTransformer implements Transformer {
   name = "openai-responses";
@@ -10,79 +68,102 @@ export class OpenAIResponsesTransformer implements Transformer {
   ): Promise<UnifiedChatRequest> {
     delete request.temperature;
     delete request.max_tokens;
-    const system = request.messages.filter((msg) => msg.role === "system");
-    if (system) {
-      if (Array.isArray(system.content)) {
-        request.instructions = system.content.join("\n\n");
+
+    const systemMessages = request.messages.filter((msg) => msg.role === "system");
+    if (systemMessages.length > 0) {
+      const firstSystem = systemMessages[0];
+      if (Array.isArray(firstSystem.content)) {
+        (request as any).instructions = firstSystem.content
+          .map((item) => {
+            if (typeof item === "string") {
+              return item;
+            } else if (item && typeof item === "object" && "text" in item) {
+              return (item as { text: string }).text;
+            }
+            return "";
+          })
+          .filter(Boolean)
+          .join("\n\n");
       } else {
-        request.instructions = system.content;
+        (request as any).instructions = firstSystem.content;
       }
     }
-    const input = [];
+
+    const input: any[] = [];
     request.messages.forEach((message) => {
       if (message.role === "system") return;
+
       if (Array.isArray(message.content)) {
-        message.content.forEach((content) => {
-          if (content.type === "text") {
-            if (message.role === "assistant") {
-              content.type = "output_text";
-            } else {
-              content.type = "input_text";
-            }
-          } else if (content.type === "image_url") {
-            content.type = "input_image";
-            content.image_url = content.image_url.url;
-            delete content.media_type;
-          }
-          delete content.cache_control;
-        });
-      }
-      if (message.role === "tool") {
-        message.type = "function_call_output";
-        message.call_id = message.tool_call_id;
-        message.output = message.content;
-        delete message.cache_control;
-        delete message.role;
-        delete message.tool_call_id;
-        delete message.content;
-      } else if (message.role === "assistant") {
-        if (Array.isArray(message.tool_calls)) {
-          message.tool_calls.forEach((tool) => {
-            input.push({
-              type: "function_call",
-              arguments: tool.function.arguments,
-              name: tool.function.name,
-              call_id: tool.id,
-            });
-          });
-          return;
+        const convertedContent = message.content
+          .map((content) => this.normalizeRequestContent(content, message.role))
+          .filter((content): content is Record<string, unknown> => content !== null);
+
+        if (convertedContent.length > 0) {
+          (message as any).content = convertedContent;
+        } else {
+          delete (message as any).content;
         }
       }
+
+      if (message.role === "tool") {
+        const toolMessage: any = { ...message };
+        toolMessage.type = "function_call_output";
+        toolMessage.call_id = message.tool_call_id;
+        toolMessage.output = message.content;
+        delete toolMessage.cache_control;
+        delete toolMessage.role;
+        delete toolMessage.tool_call_id;
+        delete toolMessage.content;
+        input.push(toolMessage);
+        return;
+      }
+
+      if (message.role === "assistant" && Array.isArray(message.tool_calls)) {
+        message.tool_calls.forEach((tool) => {
+          input.push({
+            type: "function_call",
+            arguments: tool.function.arguments,
+            name: tool.function.name,
+            call_id: tool.id,
+          });
+        });
+        return;
+      }
+
       input.push(message);
     });
-    request.input = input;
-    delete request.messages;
+
+    (request as any).input = input;
+    delete (request as any).messages;
+
     if (Array.isArray(request.tools)) {
-      const webSearch = request.tools?.find(
+      const webSearch = request.tools.find(
         (tool) => tool.function.name === "web_search"
       );
-      request.tools = request.tools.map((tool) => {
+
+      (request as any).tools = request.tools.map((tool) => {
         return {
           type: tool.type,
-          ...tool.function,
+          name: tool.function.name,
+          description: tool.function.description,
+          parameters: tool.function.parameters,
         };
       });
+
       if (webSearch) {
-        request.tools.push({
-          type: "web_search_preview"
+        (request as any).tools.push({
+          type: "web_search_preview",
         });
       }
     }
+
     return request;
   }
 
   async transformResponseOut(response: Response): Promise<Response> {
-    if (response.headers.get("Content-Type")?.includes("application/json")) {
+    const contentType = response.headers.get("Content-Type") || "";
+
+    if (contentType.includes("application/json")) {
       const jsonResponse: any = await response.json();
 
       // 检查是否为responses API格式的JSON响应
@@ -94,17 +175,15 @@ export class OpenAIResponsesTransformer implements Transformer {
           statusText: response.statusText,
           headers: response.headers,
         });
-      } else {
-        // 不是responses API格式，保持原样
-        return new Response(JSON.stringify(jsonResponse), {
-          status: response.status,
-          statusText: response.statusText,
-          headers: response.headers,
-        });
       }
-    } else if (
-      response.headers.get("Content-Type")?.includes("text/event-stream")
-    ) {
+
+      // 不是responses API格式，保持原样
+      return new Response(JSON.stringify(jsonResponse), {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    } else if (contentType.includes("text/event-stream")) {
       if (!response.body) {
         return response;
       }
@@ -112,9 +191,9 @@ export class OpenAIResponsesTransformer implements Transformer {
       const decoder = new TextDecoder();
       const encoder = new TextEncoder();
       let buffer = ""; // 用于缓冲不完整的数据
-      let currentContent = "";
       let isStreamEnded = false;
 
+      const transformer = this;
       const stream = new ReadableStream({
         async start(controller) {
           const reader = response.body!.getReader();
@@ -154,13 +233,11 @@ export class OpenAIResponsesTransformer implements Transformer {
                     }
 
                     try {
-                      const data = JSON.parse(dataStr);
+                      const data: ResponsesStreamEvent = JSON.parse(dataStr);
 
                       // 根据不同的事件类型转换为chat格式
                       if (data.type === "response.output_text.delta") {
                         // 将output_text.delta转换为chat格式
-                        currentContent += data.delta || "";
-
                         const chatChunk = {
                           id: data.item_id || "chatcmpl-" + Date.now(),
                           object: "chat.completion.chunk",
@@ -182,6 +259,35 @@ export class OpenAIResponsesTransformer implements Transformer {
                             `data: ${JSON.stringify(chatChunk)}\n\n`
                           )
                         );
+                      } else if (data.type === "response.output_image.delta") {
+                        // 处理output_image.delta事件
+                        const imageDelta = data.delta as { url?: string; b64_json?: string; mime_type?: string } | undefined;
+                        if (imageDelta) {
+                          const imageContent = transformer.buildImageContent(imageDelta);
+                          if (imageContent) {
+                            const chatChunk = {
+                              id: data.item_id || "chatcmpl-" + Date.now(),
+                              object: "chat.completion.chunk",
+                              created: Math.floor(Date.now() / 1000),
+                              model: data.response?.model,
+                              choices: [
+                                {
+                                  index: data.output_index || 0,
+                                  delta: {
+                                    content: [imageContent],
+                                  },
+                                  finish_reason: null,
+                                },
+                              ],
+                            };
+
+                            controller.enqueue(
+                              encoder.encode(
+                                `data: ${JSON.stringify(chatChunk)}\n\n`
+                              )
+                            );
+                          }
+                        }
                       } else if (
                         data.type === "response.output_item.added" &&
                         data.item?.type === "function_call"
@@ -220,6 +326,63 @@ export class OpenAIResponsesTransformer implements Transformer {
                         controller.enqueue(
                           encoder.encode(
                             `data: ${JSON.stringify(functionCallChunk)}\n\n`
+                          )
+                        );
+                      } else if (
+                        data.type === "response.output_item.added" &&
+                        data.item?.type === "message"
+                      ) {
+                        // 处理message item added事件
+                        const contentItems: MessageContent[] = [];
+                        (data.item.content || []).forEach((item: any) => {
+                          if (item.type === "output_text") {
+                            contentItems.push({
+                              type: "text",
+                              text: item.text || "",
+                            });
+                          } else if (item.type === "output_image") {
+                            const imageContent = transformer.buildImageContent({
+                              url: item.image_url,
+                              mime_type: item.mime_type,
+                            });
+                            if (imageContent) {
+                              contentItems.push(imageContent);
+                            }
+                          } else if (item.type === "output_image_base64") {
+                            const imageContent = transformer.buildImageContent({
+                              b64_json: item.image_base64,
+                              mime_type: item.mime_type,
+                            });
+                            if (imageContent) {
+                              contentItems.push(imageContent);
+                            }
+                          }
+                        });
+
+                        const delta: any = { role: "assistant" };
+                        if (contentItems.length === 1 && contentItems[0].type === "text") {
+                          delta.content = contentItems[0].text;
+                        } else if (contentItems.length > 0) {
+                          delta.content = contentItems;
+                        }
+
+                        const messageChunk = {
+                          id: data.item.id || "chatcmpl-" + Date.now(),
+                          object: "chat.completion.chunk",
+                          created: Math.floor(Date.now() / 1000),
+                          model: data.response?.model,
+                          choices: [
+                            {
+                              index: data.output_index || 0,
+                              delta,
+                              finish_reason: null,
+                            },
+                          ],
+                        };
+
+                        controller.enqueue(
+                          encoder.encode(
+                            `data: ${JSON.stringify(messageChunk)}\n\n`
                           )
                         );
                       } else if (
@@ -345,26 +508,89 @@ export class OpenAIResponsesTransformer implements Transformer {
     return response;
   }
 
-  private convertResponseToChat(responseData: any): any {
+  private normalizeRequestContent(content: any, role: string | undefined) {
+    // 克隆内容对象并删除缓存控制字段
+    const clone = { ...content };
+    delete clone.cache_control;
+
+    if (content.type === "text") {
+      return {
+        type: role === "assistant" ? "output_text" : "input_text",
+        text: content.text,
+      };
+    }
+
+    if (content.type === "image_url") {
+      console.log(content)
+      const imagePayload: Record<string, unknown> = {
+        type: role === "assistant" ? "output_image" : "input_image",
+      };
+
+      if (typeof content.image_url?.url === "string") {
+        imagePayload.image_url = content.image_url.url;
+      }
+
+      return imagePayload;
+    }
+
+    return null;
+  }
+
+  private convertResponseToChat(responseData: ResponsesAPIPayload): any {
     // 从output数组中提取不同类型的输出
     const messageOutput = responseData.output?.find(
-      (item: any) => item.type === "message"
+      (item) => item.type === "message"
     );
     const functionCallOutput = responseData.output?.find(
-      (item: any) => item.type === "function_call"
+      (item) => item.type === "function_call"
     );
 
-    let messageContent = "";
+    let messageContent: string | MessageContent[] | null = null;
     let toolCalls = null;
 
     if (messageOutput && messageOutput.content) {
-      // 提取output_text类型的文本内容
-      const textContent = messageOutput.content
-        .filter((item: any) => item.type === "output_text")
-        .map((item: any) => item.text)
-        .join("");
+      // 分离文本和图片内容
+      const textParts: string[] = [];
+      const imageParts: MessageContent[] = [];
 
-      messageContent = textContent;
+      messageOutput.content.forEach((item: any) => {
+        if (item.type === "output_text") {
+          textParts.push(item.text || "");
+        } else if (item.type === "output_image") {
+          const imageContent = this.buildImageContent({
+            url: item.image_url,
+            mime_type: item.mime_type,
+          });
+          if (imageContent) {
+            imageParts.push(imageContent);
+          }
+        } else if (item.type === "output_image_base64") {
+          const imageContent = this.buildImageContent({
+            b64_json: item.image_base64,
+            mime_type: item.mime_type,
+          });
+          if (imageContent) {
+            imageParts.push(imageContent);
+          }
+        }
+      });
+
+      // 构建最终内容
+      if (imageParts.length > 0) {
+        // 如果有图片，将所有内容组合成数组
+        const contentArray: MessageContent[] = [];
+        if (textParts.length > 0) {
+          contentArray.push({
+            type: "text",
+            text: textParts.join(""),
+          });
+        }
+        contentArray.push(...imageParts);
+        messageContent = contentArray;
+      } else {
+        // 如果只有文本，返回字符串
+        messageContent = textParts.join("");
+      }
     }
 
     if (functionCallOutput) {
@@ -409,5 +635,26 @@ export class OpenAIResponsesTransformer implements Transformer {
     };
 
     return chatResponse;
+  }
+
+  private buildImageContent(source: {
+    url?: string;
+    b64_json?: string;
+    mime_type?: string
+  }): MessageContent | null {
+    if (!source) return null;
+
+    if (source.url || source.b64_json) {
+      return {
+        type: "image_url",
+        image_url: {
+          url: source.url || "",
+          b64_json: source.b64_json,
+        },
+        media_type: source.mime_type,
+      } as MessageContent;
+    }
+
+    return null;
   }
 }

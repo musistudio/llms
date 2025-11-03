@@ -14,7 +14,7 @@ interface ResponsesAPIOutputItem {
     mime_type?: string;
     image_base64?: string;
   }>;
-  reasoning?: string; // 添加 reasoning 字段支持
+  reasoning?: string;
 }
 
 interface ResponsesAPIPayload {
@@ -155,18 +155,23 @@ export class OpenAIResponsesTransformer implements Transformer {
         (tool) => tool.function.name === "web_search"
       );
 
-      (request as any).tools = request.tools.map((tool) => {
-        return {
-          type: tool.type,
-          name: tool.function.name,
-          description: tool.function.description,
-          parameters: tool.function.parameters,
-        };
-      });
+      (request as any).tools = request.tools
+        .filter((tool) => tool.function.name !== "web_search")
+        .map((tool) => {
+          if (tool.function.name === "WebSearch") {
+            delete tool.function.parameters.properties.allowed_domains;
+          }
+          return {
+            type: tool.type,
+            name: tool.function.name,
+            description: tool.function.description,
+            parameters: tool.function.parameters,
+          };
+        });
 
       if (webSearch) {
         (request as any).tools.push({
-          type: "web_search_preview",
+          type: "web_search",
         });
       }
     }
@@ -372,6 +377,43 @@ export class OpenAIResponsesTransformer implements Transformer {
                           );
                         }
                       } else if (
+                        data.type === "response.output_text.annotation.added"
+                      ) {
+                        const annotationChunk = {
+                          id: data.item_id || "chatcmpl-" + Date.now(),
+                          object: "chat.completion.chunk",
+                          created: Math.floor(Date.now() / 1000),
+                          model: data.response?.model || "gpt-5-codex",
+                          choices: [
+                            {
+                              index: getCurrentIndex(data.type),
+                              delta: {
+                                annotations: [
+                                  {
+                                    type: "url_citation",
+                                    url_citation: {
+                                      url: data.annotation?.url || "",
+                                      title: data.annotation?.title || "",
+                                      content: "",
+                                      start_index:
+                                        data.annotation?.start_index || 0,
+                                      end_index:
+                                        data.annotation?.end_index || 0,
+                                    },
+                                  },
+                                ],
+                              },
+                              finish_reason: null,
+                            },
+                          ],
+                        };
+
+                        controller.enqueue(
+                          encoder.encode(
+                            `data: ${JSON.stringify(annotationChunk)}\n\n`
+                          )
+                        );
+                      } else if (
                         data.type === "response.function_call_arguments.delta"
                       ) {
                         // 处理function call参数增量
@@ -458,7 +500,10 @@ export class OpenAIResponsesTransformer implements Transformer {
                             `data: ${JSON.stringify(thinkingChunk)}\n\n`
                           )
                         );
-                      } else if(data.type === "response.reasoning_summary_part.done" && data.part) {
+                      } else if (
+                        data.type === "response.reasoning_summary_part.done" &&
+                        data.part
+                      ) {
                         const thinkingChunk = {
                           id: data.item_id || "chatcmpl-" + Date.now(),
                           object: "chat.completion.chunk",
@@ -574,6 +619,29 @@ export class OpenAIResponsesTransformer implements Transformer {
     const functionCallOutput = responseData.output?.find(
       (item) => item.type === "function_call"
     );
+    let annotations;
+    if (
+      messageOutput?.content?.length &&
+      messageOutput?.content[0].annotations
+    ) {
+      annotations = messageOutput.content[0].annotations.map((item) => {
+        return {
+          type: "url_citation",
+          url_citation: {
+            url: item.url || "",
+            title: item.title || "",
+            content: "",
+            start_index: item.start_index || 0,
+            end_index: item.end_index || 0,
+          },
+        };
+      });
+    }
+
+    this.logger.debug({
+      data: annotations,
+      type: "url_citation",
+    });
 
     let messageContent: string | MessageContent[] | null = null;
     let toolCalls = null;
@@ -650,15 +718,16 @@ export class OpenAIResponsesTransformer implements Transformer {
       id: responseData.id || "chatcmpl-" + Date.now(),
       object: "chat.completion",
       created: responseData.created_at,
-      model: responseData.model || "gpt-4.1-2025-04-14", // 使用适当的默认模型名称
+      model: responseData.model,
       choices: [
         {
           index: 0,
           message: {
             role: "assistant",
-            content: messageContent || null, // 如果有tool_calls，content可能是null
+            content: messageContent || null,
             tool_calls: toolCalls,
-            thinking: thinking, // 添加推理内容
+            thinking: thinking,
+            annotations: annotations,
           },
           logprobs: null,
           finish_reason: toolCalls ? "tool_calls" : "stop",

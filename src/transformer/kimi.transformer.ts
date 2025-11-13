@@ -51,6 +51,8 @@ export class KimiTransformer implements Transformer {
   name = "Kimi";
   endPoint = "/v1/chat/completions";
 
+  private options: KimiTransformerOptions;
+
   // Cached regex patterns
   private regexCache: {
     section?: RegExp;
@@ -59,8 +61,9 @@ export class KimiTransformer implements Transformer {
     id?: RegExp;
   } = {};
 
-  constructor(private options: KimiTransformerOptions = {}) {
-    // Set defaults with deep merge
+
+  constructor(options: KimiTransformerOptions = {}) {
+    this.options = options;
     const defaults: KimiTransformerOptions = {
       toolChoiceDefault: "auto",
       acceptRoleTool: true,
@@ -74,26 +77,22 @@ export class KimiTransformer implements Transformer {
         callEnd: "<|tool_call_end|>",
         argBegin: "<|tool_call_argument_begin|>",
       },
-      idNormalization: true,
+      idNormalization: false,
       idPrefix: "functions",
       counterScope: "conversation",
       repairOnMismatch: true,
+      assembleToolDeltas: false,
     };
 
     this.options = this.deepMerge(defaults, options);
   }
 
-  /**
-   * Deep merge two objects
-   */
   private deepMerge(target: any, source: any): any {
     const result = { ...target };
-
     for (const key in source) {
-      if (source.hasOwnProperty(key)) {
+      if (Object.prototype.hasOwnProperty.call(source, key)) {
         const sourceValue = source[key];
         const targetValue = result[key];
-
         if (this.isObject(sourceValue) && this.isObject(targetValue)) {
           result[key] = this.deepMerge(targetValue, sourceValue);
         } else if (sourceValue !== undefined) {
@@ -101,89 +100,132 @@ export class KimiTransformer implements Transformer {
         }
       }
     }
-
     return result;
   }
 
-  /**
-   * Check if value is a plain object
-   */
   private isObject(value: any): value is Record<string, any> {
-    return value !== null && typeof value === 'object' && !Array.isArray(value);
+    return value !== null && typeof value === "object" && !Array.isArray(value);
   }
 
-  /**
-   * Transform incoming requests (from client to provider)
-   */
-  async transformRequestIn(request: UnifiedChatRequest, provider: LLMProvider, context: TransformerContext): Promise<Record<string, any>> {
-    // Set default tool_choice if not specified and tools are present
+  async transformRequestIn(
+    request: UnifiedChatRequest,
+    _provider: LLMProvider,
+    _context: TransformerContext,
+  ): Promise<Record<string, any>> {
     if (request.tools && request.tools.length > 0 && !request.tool_choice) {
       request.tool_choice = this.options.toolChoiceDefault;
     }
 
-    // Validate tool messages if acceptRoleTool is enabled
     if (this.options.acceptRoleTool) {
-      // Ensure tool messages have required fields
       for (const message of request.messages) {
-        if (message.role === 'tool') {
+        if (message.role === "tool") {
           if (!message.tool_call_id || !message.content) {
-            throw new Error('Tool messages must have tool_call_id and content');
+            throw new Error("Tool messages must have tool_call_id and content");
           }
         }
       }
     }
 
+
     return request;
   }
 
   /**
-   * Extract tool calls from Kimi's manual markers in completion text
+   * Transform outgoing requests (from unified format to Kimi-specific format)
    */
+  async transformRequestOut(request: any, _context: TransformerContext): Promise<UnifiedChatRequest> {
+    // Kimi-K2 is OpenAI-compatible; preserve unified shape.
+    const body = { ...request };
+
+    if (Array.isArray(body.tools) && body.tools.length > 0 && !body.tool_choice) {
+      body.tool_choice = this.options.toolChoiceDefault;
+    }
+
+    // Stay neutral: do not drop metadata or extra fields.
+    return body;
+  }
+
+  /**
+   * Transform provider responses (Kimi format -> unified format).
+   * This is the primary response hook for Kimi, keeping behavior Kimi-specific.
+   */
+  async transformResponseOut(response: Response, context: TransformerContext): Promise<Response> {
+    const request = context?.req?.body as UnifiedChatRequest | undefined;
+
+    // Streaming: wrap SSE and (optionally) assemble tool_calls deltas.
+    if (this.isStreamingResponse(response)) {
+      return this.handleStreamingToolCalls(response, request);
+    }
+
+    // Manual K2 marker parsing for non-streaming responses.
+    if (this.options.manualToolParsing && request) {
+      return this.handleManualToolParsing(response, request);
+    }
+
+    // Optional ID normalization/repair for native tool_calls.
+    if ((this.options.idNormalization || this.options.repairOnMismatch) && request) {
+      try {
+        const clone = response.clone();
+        const json = (await clone.json()) as OpenAIResponse;
+        const choice = json.choices?.[0];
+        const msg = choice?.message;
+        if (msg?.tool_calls && Array.isArray(msg.tool_calls)) {
+          msg.tool_calls = this.repairOrNormalizeToolCalls(
+            msg.tool_calls,
+            request.messages || [],
+          );
+          if (this.options.enforceFinishReasonLoop && msg.tool_calls.length > 0) {
+            choice!.finish_reason = "tool_calls";
+          }
+          return new Response(JSON.stringify(json), {
+            status: response.status,
+            statusText: response.statusText,
+            headers: response.headers,
+          });
+        }
+      } catch {
+        // Fall through on parse errors.
+      }
+    }
+
+    // Default: pass through Kimi's OpenAI-compatible response unchanged.
+    return response;
+  }
+
   private extractToolCallInfo(text: string): {
     toolCalls: ToolCall[];
     cleanContent: string;
   } {
-    // Input validation
-    if (!text || typeof text !== 'string') {
+    if (!text || typeof text !== "string") {
       return { toolCalls: [], cleanContent: text };
     }
 
     if (!this.options.toolTokens) {
-      console.warn('Tool tokens not configured for manual parsing');
       return { toolCalls: [], cleanContent: text };
     }
 
     const regex = this.getRegexPatterns();
     const sectionRegex = regex.section!;
-    const callRegex = regex.call!;
-    const argRegex = regex.arg!;
 
     const toolCalls: ToolCall[] = [];
-
     let cleanContent = text;
 
     try {
-      // Check if manual markers exist
       const sectionMatch = text.match(sectionRegex);
       if (sectionMatch) {
         const sectionContent = sectionMatch[1];
         const parsedToolCalls = this.parseToolCallsFromSection(sectionContent);
-
         toolCalls.push(...parsedToolCalls);
-        cleanContent = text.replace(sectionRegex, '').trim();
+        cleanContent = text.replace(sectionRegex, "").trim();
       }
-    } catch (error) {
-      console.error('Error parsing tool calls from text:', error);
-      // Return original text on error
+    } catch {
+      console.error("Error parsing tool calls from text");
       return { toolCalls: [], cleanContent: text };
     }
 
     return { toolCalls, cleanContent };
   }
 
-  /**
-   * Parse individual tool calls from a section of text
-   */
   private parseToolCallsFromSection(sectionContent: string): ToolCall[] {
     const toolCalls: ToolCall[] = [];
     const regex = this.getRegexPatterns();
@@ -194,7 +236,6 @@ export class KimiTransformer implements Transformer {
     while ((callMatch = callRegex.exec(sectionContent)) !== null) {
       const callContent = callMatch[1];
       const argMatch = callContent.match(argRegex);
-
       if (argMatch) {
         const toolCall = this.extractFunctionInfo(callContent, argMatch[1]);
         if (toolCall) {
@@ -206,9 +247,6 @@ export class KimiTransformer implements Transformer {
     return toolCalls;
   }
 
-  /**
-   * Extract function information from call content
-   */
   private extractFunctionInfo(callContent: string, args: string): ToolCall | null {
     try {
       const argMarkerIndex = callContent.indexOf(this.options.toolTokens!.argBegin);
@@ -217,11 +255,10 @@ export class KimiTransformer implements Transformer {
       const functionId = callContent.substring(0, argMarkerIndex).trim();
       const trimmedArgs = args.trim();
 
-      // Parse function name from ID (format: functions.name:idx)
-      const idParts = functionId.split('.');
+      const idParts = functionId.split(".");
       let functionName = functionId;
       if (idParts.length >= 2) {
-        const namePart = idParts[1].split(':')[0];
+        const namePart = idParts[1].split(":")[0];
         functionName = namePart || functionId;
       }
 
@@ -230,79 +267,74 @@ export class KimiTransformer implements Transformer {
         type: "function",
         function: {
           name: functionName,
-          arguments: trimmedArgs
-        }
+          arguments: trimmedArgs,
+        },
       };
-    } catch (error) {
-      console.warn('Error extracting function info:', error);
+    } catch {
+      console.warn("Error extracting function info");
       return null;
     }
   }
 
-  /**
-   * Escape regex special characters
-   */
   private getRegexPatterns() {
     const tokens = this.options.toolTokens!;
-    const cacheKey = JSON.stringify(tokens);
-
-    // Check if we have cached patterns for current config
-    if (!this.regexCache.section ||
-        this.regexCache.section.source !== `${this.escapeRegex(tokens.sectionBegin)}(.*?)${this.escapeRegex(tokens.sectionEnd)}`) {
-
+    if (
+      !this.regexCache.section ||
+      this.regexCache.section.source !==
+        `${this.escapeRegex(tokens.sectionBegin)}(.*?)${this.escapeRegex(tokens.sectionEnd)}`
+    ) {
       this.regexCache = {
-        section: new RegExp(`${this.escapeRegex(tokens.sectionBegin)}(.*?)${this.escapeRegex(tokens.sectionEnd)}`, 's'),
-        call: new RegExp(`${this.escapeRegex(tokens.callBegin)}(.*?)${this.escapeRegex(tokens.callEnd)}`, 'gs'),
-        arg: new RegExp(`${this.escapeRegex(tokens.argBegin)}(.*)`, 's'),
-        id: new RegExp(`${this.escapeRegex(this.options.idPrefix!)}\\.[^:]+:(\\d+)`, 'g'),
+        section: new RegExp(
+          `${this.escapeRegex(tokens.sectionBegin)}(.*?)${this.escapeRegex(tokens.sectionEnd)}`,
+          "s",
+        ),
+        call: new RegExp(
+          `${this.escapeRegex(tokens.callBegin)}(.*?)${this.escapeRegex(tokens.callEnd)}`,
+          "gs",
+        ),
+        arg: new RegExp(`${this.escapeRegex(tokens.argBegin)}(.*)`, "s"),
+        id: new RegExp(
+          `${this.escapeRegex(this.options.idPrefix!)}\.[^:]+:(\\d+)`,
+          "g",
+        ),
       };
     }
-
     return this.regexCache;
   }
 
-  /**
-   * Escape regex special characters
-   */
-  private escapeRegex(string: string): string {
-    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  private escapeRegex(str: string): string {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
-  /**
-   * Get next tool call index for conversation-global monotonic counter
-   */
   private getNextToolCallIndex(messages: UnifiedMessage[]): number {
-    // Input validation
     if (!messages || !Array.isArray(messages)) {
       return 0;
     }
-
     if (!this.options.idPrefix) {
-      console.warn('ID prefix not configured');
       return 0;
     }
-
     const idRegex = this.getRegexPatterns().id!;
     let maxIndex = -1;
 
     for (const message of messages) {
-      // Check tool_calls in assistant messages
-      if (message.tool_calls) {
-        for (const toolCall of message.tool_calls) {
+      if ((message as any).tool_calls) {
+        for (const toolCall of (message as any).tool_calls as ToolCall[]) {
           const matches = [...toolCall.id.matchAll(idRegex)];
           for (const match of matches) {
             const index = parseInt(match[1], 10);
-            maxIndex = Math.max(maxIndex, index);
+            if (!Number.isNaN(index)) {
+              maxIndex = Math.max(maxIndex, index);
+            }
           }
         }
       }
-
-      // Also check tool_call_id in tool messages (for validation)
-      if (message.role === 'tool' && message.tool_call_id) {
-        const matches = [...message.tool_call_id.matchAll(idRegex)];
+      if (message.role === "tool" && (message as any).tool_call_id) {
+        const matches = [...((message as any).tool_call_id as string).matchAll(idRegex)];
         for (const match of matches) {
           const index = parseInt(match[1], 10);
-          maxIndex = Math.max(maxIndex, index);
+          if (!Number.isNaN(index)) {
+            maxIndex = Math.max(maxIndex, index);
+          }
         }
       }
     }
@@ -310,77 +342,70 @@ export class KimiTransformer implements Transformer {
     return maxIndex + 1;
   }
 
-  /**
-   * Normalize tool call IDs to ensure monotonic conversation-global counter
-   */
-  private normalizeToolCallIds(toolCalls: ToolCall[], messages: UnifiedMessage[]): ToolCall[] {
-    // Input validation
-    if (!toolCalls || !Array.isArray(toolCalls)) {
-      return [];
+  private repairOrNormalizeToolCalls(
+    toolCalls: ToolCall[],
+    messages: UnifiedMessage[],
+  ): ToolCall[] {
+    if (!this.options.idNormalization && !this.options.repairOnMismatch) {
+      return toolCalls;
     }
-
-    if (!this.options.idNormalization) return toolCalls;
-
+    if (!toolCalls || !toolCalls.length) return toolCalls;
     if (!this.options.idPrefix) {
-      console.warn('ID prefix not configured for normalization');
       return toolCalls;
     }
 
-    const nextIndex = this.getNextToolCallIndex(messages);
+    const idRegex = this.getRegexPatterns().id!;
     const prefix = this.options.idPrefix;
+    const nextIndexBase = this.getNextToolCallIndex(messages);
+    let offset = 0;
 
-    return toolCalls.map((call, idx) => {
-      const functionName = call.function.name;
-      const normalizedId = `${prefix}.${functionName}:${nextIndex + idx}`;
-
-      return {
-        ...call,
-        id: normalizedId
-      };
+    return toolCalls.map((call) => {
+      const isValid = idRegex.test(call.id);
+      idRegex.lastIndex = 0;
+      if (this.options.idNormalization || (this.options.repairOnMismatch && !isValid)) {
+        const functionName = call.function.name;
+        const normalizedId = `${prefix}.${functionName}:${nextIndexBase + offset}`;
+        offset += 1;
+        return { ...call, id: normalizedId };
+      }
+      return call;
     });
   }
 
-  /**
-   * Handle manual tool parsing mode for responses
-   */
-  private async handleManualToolParsing(response: Response, request: UnifiedChatRequest): Promise<Response> {
-    // Input validation
+  private async handleManualToolParsing(
+    response: Response,
+    request: UnifiedChatRequest,
+  ): Promise<Response> {
     if (!request?.messages) {
-      console.warn('Request messages not available for tool parsing');
       return response;
     }
 
     let jsonResponse: OpenAIResponse;
     try {
-      jsonResponse = await response.json() as OpenAIResponse;
-    } catch (error) {
-      console.error('Failed to parse response JSON:', error);
+      jsonResponse = (await response.json()) as OpenAIResponse;
+    } catch {
       return response;
     }
 
     try {
-      if (jsonResponse.choices?.[0]?.message?.content) {
-        const content = jsonResponse.choices[0].message.content;
-        const { toolCalls, cleanContent } = this.extractToolCallInfo(content);
-
+      const choice = jsonResponse.choices?.[0];
+      const message = choice?.message;
+      if (message?.content) {
+        const { toolCalls, cleanContent } = this.extractToolCallInfo(message.content);
         if (toolCalls.length > 0) {
-          // Normalize IDs for conversation-global monotonic counter
-          const normalizedToolCalls = this.normalizeToolCallIds(toolCalls, request.messages || []);
-
-          // Update response with structured tool calls
-          jsonResponse.choices[0].message.tool_calls = normalizedToolCalls;
-          jsonResponse.choices[0].message.content = cleanContent;
-          jsonResponse.choices[0].finish_reason = 'tool_calls';
-
-          // Remove tool_calls from content if emitToolCallsInJson is false
-          if (!this.options.emitToolCallsInJson) {
-            jsonResponse.choices[0].message.content = cleanContent;
+          const normalizedToolCalls = this.repairOrNormalizeToolCalls(
+            toolCalls,
+            request.messages || [],
+          );
+          message.tool_calls = normalizedToolCalls;
+          message.content = this.options.emitToolCallsInJson ? cleanContent : cleanContent;
+          if (this.options.enforceFinishReasonLoop) {
+            choice!.finish_reason = "tool_calls";
           }
         }
       }
-    } catch (error) {
-      console.error('Error processing manual tool parsing:', error);
-      // Return original response on error
+    } catch {
+      // On error, fall through with original jsonResponse
     }
 
     return new Response(JSON.stringify(jsonResponse), {
@@ -390,60 +415,139 @@ export class KimiTransformer implements Transformer {
     });
   }
 
-  /**
-   * Handle streaming responses with tool calls
-   */
-  private handleStreamingToolCalls(response: Response): Response {
+  private handleStreamingToolCalls(
+    response: Response,
+    request?: UnifiedChatRequest,
+  ): Response {
     if (!response.body) return response;
 
     const decoder = new TextDecoder();
     const encoder = new TextEncoder();
+    const assemble = this.options.assembleToolDeltas === true;
+    const idPrefix = this.options.idPrefix || "functions";
+
+    // Per-stream state (do NOT use shared instance state)
+    const toolCallBuffers = new Map<number, ToolCall>();
+    let finalized = false;
 
     const stream = new ReadableStream({
-      async start(controller) {
+      start: async (controller) => {
         const reader = response.body!.getReader();
+        let buffered = "";
+
+        const flush = async () => {
+          if (!assemble || finalized || toolCallBuffers.size === 0) return;
+
+          const sorted = Array.from(toolCallBuffers.entries()).sort(
+            ([aIndex], [bIndex]) => aIndex - bIndex,
+          );
+          const toolCalls = sorted.map(([, call]) => call);
+
+          const baseMessages = request?.messages || [];
+          const repaired = this.repairOrNormalizeToolCalls(toolCalls, baseMessages);
+
+          const finalChunk = {
+            object: "chat.completion.chunk",
+            choices: [
+              {
+                delta: { tool_calls: repaired },
+                finish_reason: "tool_calls",
+              },
+            ],
+          };
+
+          const line = `data: ${JSON.stringify(finalChunk)}\n\n`;
+          controller.enqueue(encoder.encode(line));
+          finalized = true;
+        };
+
 
         try {
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
+            buffered += decoder.decode(value, { stream: true });
 
-            const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split('\n');
+            let newlineIndex;
+            while ((newlineIndex = buffered.indexOf("\n")) >= 0) {
+              const rawLine = buffered.slice(0, newlineIndex);
+              buffered = buffered.slice(newlineIndex + 1);
+              const line = rawLine.trimEnd();
 
-            for (const line of lines) {
-              if (line.startsWith('data: ') && line.trim() !== 'data: [DONE]') {
-                try {
-                  const data = JSON.parse(line.slice(6));
-
-                  // For standard mode, pass through tool_calls chunks unchanged
-                  if (data.choices?.[0]?.delta?.tool_calls ||
-                      data.choices?.[0]?.finish_reason === 'tool_calls') {
-                    controller.enqueue(encoder.encode(line + '\n\n'));
-                  } else if (data.choices?.[0]?.delta &&
-                           Object.keys(data.choices[0].delta).length > 0) {
-                    controller.enqueue(encoder.encode(line + '\n\n'));
-                  }
-                } catch (parseError) {
-                  console.warn('Failed to parse streaming chunk:', parseError);
-                  // Pass through malformed lines
-                  controller.enqueue(encoder.encode(line + '\n'));
-                }
-              } else {
-                // Pass through non-data lines
-                controller.enqueue(encoder.encode(line + '\n'));
+              if (!line.startsWith("data:")) {
+                controller.enqueue(encoder.encode(rawLine + "\n"));
+                continue;
               }
+
+              const dataPart = line.slice(5).trimStart();
+              if (dataPart === "[DONE]") {
+                await flush();
+                controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                break;
+              }
+
+              let parsed: any;
+              try {
+                parsed = JSON.parse(dataPart);
+              } catch {
+                controller.enqueue(encoder.encode(rawLine + "\n"));
+                continue;
+              }
+
+              const choice = parsed.choices?.[0];
+              const delta = choice?.delta;
+
+              if (!assemble) {
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify(parsed)}\n\n`));
+                continue;
+              }
+
+              if (delta?.tool_calls && Array.isArray(delta.tool_calls)) {
+                for (const tc of delta.tool_calls as any[]) {
+                  const index = tc.index ?? 0;
+                  const existing = toolCallBuffers.get(index) || {
+                    id: tc.id || "",
+                    type: "function",
+                    function: { name: "", arguments: "" },
+                  };
+
+                  if (typeof tc.id === "string" && tc.id.length) {
+                    existing.id = tc.id;
+                  }
+                  if (tc.function?.name) {
+                    existing.function.name = tc.function.name;
+                  }
+                  if (typeof tc.function?.arguments === "string") {
+                    existing.function.arguments += tc.function.arguments;
+                  }
+
+                  if (!existing.id && existing.function.name) {
+                    existing.id = `${idPrefix}.${existing.function.name}:${index}`;
+                  }
+
+                  toolCallBuffers.set(index, existing as ToolCall);
+                }
+                // Always emit original chunk while buffering
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify(parsed)}\n\n`));
+                continue;
+              }
+
+              if (choice?.finish_reason === "tool_calls") {
+                await flush();
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify(parsed)}\n\n`));
+                continue;
+              }
+
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(parsed)}\n\n`));
             }
           }
-        } catch (error) {
-          controller.error(error);
+
+          await flush();
+        } catch (err) {
+          controller.error(err);
         } finally {
+          reader.releaseLock();
           controller.close();
-          try {
-            reader.releaseLock();
-          } catch (e) {
-            // Ignore
-          }
         }
       },
     });
@@ -452,37 +556,27 @@ export class KimiTransformer implements Transformer {
       status: response.status,
       statusText: response.statusText,
       headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
       },
     });
   }
 
-
-
   /**
-   * Transform response for manual tool parsing mode
+   * Check if response is a streaming response
    */
-  async transformResponseIn(response: Response, context?: TransformerContext): Promise<Response> {
-    // Input validation
+  private isStreamingResponse(response: Response): boolean {
+    const contentType = response.headers.get("Content-Type") || "";
+    return contentType.includes("text/event-stream") ||
+           contentType.includes("application/x-ndjson");
+  }
+
+  // Final hook in the chain; Kimi-specific work happens in transformResponseOut.
+  async transformResponseIn(response: Response, _context?: TransformerContext): Promise<Response> {
     if (!response) {
-      throw new Error('Response is required');
+      throw new Error("Response is required");
     }
-
-    const request = context?.req?.body as UnifiedChatRequest;
-
-    // Handle streaming responses
-    if (response.headers.get('Content-Type')?.includes('stream')) {
-      return this.handleStreamingToolCalls(response);
-    }
-
-    // Handle non-streaming responses
-    if (this.options.manualToolParsing) {
-      return this.handleManualToolParsing(response, request);
-    }
-
-    // Standard mode: pass through unchanged
     return response;
   }
 }

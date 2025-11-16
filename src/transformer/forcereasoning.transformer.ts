@@ -1,6 +1,16 @@
 import { UnifiedChatRequest } from "../types/llm";
 import { Transformer } from "../types/transformer";
 
+const PROMPT = `You are an expert reasoning model. 
+
+Always think step by step before answering. Even if the problem seems simple, always write down your reasoning process explicitly.
+
+Output format:
+<reasoning_content>
+Your detailed thinking process goes here
+</reasoning_content>
+Your final answer must follow after the closing tag above.`
+
 export class ForceReasoningTransformer implements Transformer {
   name = "forcereasoning";
 
@@ -13,14 +23,14 @@ export class ForceReasoningTransformer implements Transformer {
     if (Array.isArray(systemMessage?.content)) {
       systemMessage.content.push({
         type: "text",
-        text: "You are an expert reasoning model. \nAlways think step by step before answering. Even if the problem seems simple, always write down your reasoning process explicitly. \nNever skip your chain of thought. \nUse the following output format:\n<reasoning_content>(Write your full detailed thinking here.)</reasoning_content>\n\nWrite your final conclusion here.",
+        text: PROMPT,
       });
     }
     const lastMessage = request.messages[request.messages.length - 1];
     if (lastMessage.role === "user" && Array.isArray(lastMessage.content)) {
       lastMessage.content.push({
         type: "text",
-        text: "You are an expert reasoning model. \nAlways think step by step before answering. Even if the problem seems simple, always write down your reasoning process explicitly. \nNever skip your chain of thought. \nUse the following output format:\n<reasoning_content>(Write your full detailed thinking here.)</reasoning_content>\n\nWrite your final conclusion here.",
+        text: PROMPT,
       });
     }
     if (lastMessage.role === "tool") {
@@ -29,11 +39,249 @@ export class ForceReasoningTransformer implements Transformer {
         content: [
           {
             type: "text",
-            text: "You are an expert reasoning model. \nAlways think step by step before answering. Even if the problem seems simple, always write down your reasoning process explicitly. \nNever skip your chain of thought. \nUse the following output format:\n<reasoning_content>(Write your full detailed thinking here.)</reasoning_content>\n\nWrite your final conclusion here.",
+            text: PROMPT,
           },
         ],
       });
     }
     return request;
+  }
+
+  async transformResponseOut(response: Response): Promise<Response> {
+    const reasonStartTag = "<reasoning_content>";
+    const reasonStopTag = "</reasoning_content>";
+
+    if (response.headers.get("Content-Type")?.includes("application/json")) {
+      const jsonResponse: any = await response.json();
+      if (jsonResponse.choices[0]?.message.content) {
+        const regex = /<reasoning_content>(.*?)<\/reasoning_content>/s;
+        const match = jsonResponse.choices[0]?.message.content.match(regex);
+        if (match && match[1]) {
+          jsonResponse.thinking = {
+            content: match[1],
+          };
+        }
+      }
+      return new Response(JSON.stringify(jsonResponse), {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    } else if (response.headers.get("Content-Type")?.includes("stream")) {
+      if (!response.body) {
+        return response;
+      }
+
+      const decoder = new TextDecoder();
+      const encoder = new TextEncoder();
+
+      const stream = new ReadableStream({
+        async start(controller) {
+          const reader = response.body!.getReader();
+          let lineBuffer = "";
+
+          let fsmState: "SEARCHING" | "REASONING" | "FINAL" = "SEARCHING";
+          let tagBuffer = "";
+          let finalBuffer = "";
+
+          const processAndEnqueue = (
+            originalData: any,
+            content: string | null | undefined
+          ) => {
+            if (typeof content !== "string") {
+              if (
+                originalData.choices?.[0]?.delta &&
+                Object.keys(originalData.choices[0].delta).length > 0 &&
+                !originalData.choices[0].delta.content
+              ) {
+                controller.enqueue(
+                  encoder.encode(`data: ${JSON.stringify(originalData)}\n\n`)
+                );
+              }
+              return;
+            }
+
+            let currentContent = tagBuffer + content;
+            tagBuffer = "";
+
+            while (currentContent.length > 0) {
+              if (fsmState === "SEARCHING") {
+                const startTagIndex = currentContent.indexOf(reasonStartTag);
+                if (startTagIndex !== -1) {
+                  currentContent = currentContent.substring(
+                    startTagIndex + reasonStartTag.length
+                  );
+                  fsmState = "REASONING";
+                } else {
+                  for (let i = reasonStartTag.length - 1; i > 0; i--) {
+                    if (currentContent.endsWith(reasonStartTag.substring(0, i))) {
+                      tagBuffer = currentContent.substring(
+                        currentContent.length - i
+                      );
+                      break;
+                    }
+                  }
+                  currentContent = "";
+                }
+              } else if (fsmState === "REASONING") {
+                const endTagIndex = currentContent.indexOf(reasonStopTag);
+                if (endTagIndex !== -1) {
+                  const reasoningPart = currentContent.substring(0, endTagIndex);
+                  if (reasoningPart.length > 0) {
+                    const newDelta = {
+                      ...originalData.choices[0].delta,
+                      thinking: {
+                        content: reasoningPart
+                      },
+                    };
+                    delete newDelta.content;
+                    const thinkingChunk = {
+                      ...originalData,
+                      choices: [{ ...originalData.choices[0], delta: newDelta }],
+                    };
+                    controller.enqueue(
+                      encoder.encode(`data: ${JSON.stringify(thinkingChunk)}\n\n`)
+                    );
+                  }
+
+                  // Send signature message
+                  const signatureDelta = {
+                    ...originalData.choices[0].delta,
+                    thinking: { signature: new Date().getTime().toString() },
+                  };
+                  delete signatureDelta.content;
+                  const signatureChunk = {
+                    ...originalData,
+                    choices: [{ ...originalData.choices[0], delta: signatureDelta }],
+                  };
+                  controller.enqueue(
+                    encoder.encode(`data: ${JSON.stringify(signatureChunk)}\n\n`)
+                  );
+
+                  currentContent = currentContent.substring(
+                    endTagIndex + reasonStopTag.length
+                  );
+                  fsmState = "FINAL";
+                } else {
+                  let reasoningPart = currentContent;
+                  for (let i = reasonStopTag.length - 1; i > 0; i--) {
+                    if (currentContent.endsWith(reasonStopTag.substring(0, i))) {
+                      tagBuffer = currentContent.substring(
+                        currentContent.length - i
+                      );
+                      reasoningPart = currentContent.substring(
+                        0,
+                        currentContent.length - i
+                      );
+                      break;
+                    }
+                  }
+                  if (reasoningPart.length > 0) {
+                     const newDelta = {
+                      ...originalData.choices[0].delta,
+                      thinking: { content: reasoningPart },
+                    };
+                    delete newDelta.content;
+                    const thinkingChunk = {
+                      ...originalData,
+                      choices: [{ ...originalData.choices[0], delta: newDelta }],
+                    };
+                    controller.enqueue(
+                      encoder.encode(`data: ${JSON.stringify(thinkingChunk)}\n\n`)
+                    );
+                  }
+                  currentContent = "";
+                }
+              } else if (fsmState === "FINAL") {
+                if (currentContent.length > 0) {
+                  // 检查内容是否只包含换行符
+                  const isOnlyNewlines = /^\s*$/.test(currentContent);
+
+                  if (isOnlyNewlines) {
+                    // 如果只有换行符，添加到缓冲区但不发送
+                    finalBuffer += currentContent;
+                  } else {
+                    // 如果有非换行符内容，将缓冲区和新内容一起发送
+                    const finalPart = finalBuffer + currentContent;
+                    const newDelta = {
+                      ...originalData.choices[0].delta,
+                      content: finalPart,
+                    };
+                    if(newDelta.thinking) delete newDelta.thinking
+                    const finalChunk = {
+                      ...originalData,
+                      choices: [
+                        { ...originalData.choices[0], delta: newDelta },
+                      ],
+                    };
+                    controller.enqueue(
+                      encoder.encode(`data: ${JSON.stringify(finalChunk)}\n\n`)
+                    );
+                    // 发送后清空缓冲区
+                    finalBuffer = "";
+                  }
+                }
+                currentContent = "";
+              }
+            }
+          };
+
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) {
+                break;
+              }
+              const chunk = decoder.decode(value, { stream: true });
+              lineBuffer += chunk;
+              const lines = lineBuffer.split("\n");
+              lineBuffer = lines.pop() || "";
+
+              for (const line of lines) {
+                if (!line.trim()) continue;
+
+                if (line.trim() === "data: [DONE]") {
+                  controller.enqueue(encoder.encode(line + "\n\n"));
+                  break;
+                }
+
+                if (line.startsWith("data:")) {
+                  try {
+                    const data = JSON.parse(line.slice(5));
+                    processAndEnqueue(data, data.choices?.[0]?.delta?.content);
+                  } catch (e) {
+                    controller.enqueue(encoder.encode(line + "\n"));
+                  }
+                } else {
+                  controller.enqueue(encoder.encode(line + "\n"));
+                }
+              }
+            }
+          } catch (error) {
+            console.error("Stream error:", error);
+            controller.error(error);
+          } finally {
+            try {
+              reader.releaseLock();
+            } catch (e) {
+              console.error("Error releasing reader lock:", e);
+            }
+            controller.close();
+          }
+        },
+      });
+
+      return new Response(stream, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: {
+          "Content-Type": response.headers.get("Content-Type") || "text/plain",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        },
+      });
+    }
+
+    return response;
   }
 }

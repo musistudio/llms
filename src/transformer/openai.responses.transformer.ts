@@ -76,8 +76,12 @@ export class OpenAIResponsesTransformer implements Transformer {
 
     // 处理 reasoning 参数
     if (request.reasoning) {
-      (request as any).reasoning = request.reasoning;
+      (request as any).reasoning = {
+        effort: request.reasoning.effort,
+      };
     }
+
+    const input: any[] = [];
 
     const systemMessages = request.messages.filter(
       (msg) => msg.role === "system"
@@ -85,23 +89,23 @@ export class OpenAIResponsesTransformer implements Transformer {
     if (systemMessages.length > 0) {
       const firstSystem = systemMessages[0];
       if (Array.isArray(firstSystem.content)) {
-        (request as any).instructions = firstSystem.content
-          .map((item) => {
-            if (typeof item === "string") {
-              return item;
-            } else if (item && typeof item === "object" && "text" in item) {
-              return (item as { text: string }).text;
-            }
-            return "";
-          })
-          .filter(Boolean)
-          .join("\n\n");
+        firstSystem.content.forEach((item) => {
+          let text = "";
+          if (typeof item === "string") {
+            text = item;
+          } else if (item && typeof item === "object" && "text" in item) {
+            text = (item as { text: string }).text;
+          }
+          input.push({
+            role: "system",
+            content: text,
+          });
+        });
       } else {
         (request as any).instructions = firstSystem.content;
       }
     }
 
-    const input: any[] = [];
     request.messages.forEach((message) => {
       if (message.role === "system") return;
 
@@ -161,6 +165,23 @@ export class OpenAIResponsesTransformer implements Transformer {
           if (tool.function.name === "WebSearch") {
             delete tool.function.parameters.properties.allowed_domains;
           }
+          if (tool.function.name === "Edit") {
+            return {
+              type: tool.type,
+              name: tool.function.name,
+              description: tool.function.description,
+              parameters: {
+                ...tool.function.parameters,
+                required: [
+                  "file_path",
+                  "old_string",
+                  "new_string",
+                  "replace_all",
+                ],
+              },
+              strict: true,
+            };
+          }
           return {
             type: tool.type,
             name: tool.function.name,
@@ -175,6 +196,8 @@ export class OpenAIResponsesTransformer implements Transformer {
         });
       }
     }
+
+    request.parallel_tool_calls = false;
 
     return request;
   }

@@ -261,6 +261,13 @@ export class AnthropicTransformer implements Transformer {
         let contentIndex = 0;
         let currentContentBlockIndex = -1; // Track the current content block index
 
+        // 原子性的content block index分配函数
+        const assignContentBlockIndex = (): number => {
+          const currentIndex = contentIndex;
+          contentIndex++;
+          return currentIndex;
+        };
+
         const safeEnqueue = (data: Uint8Array) => {
           if (!isClosed) {
             try {
@@ -505,9 +512,10 @@ export class AnthropicTransformer implements Transformer {
                   // }
 
                   if (!isThinkingStarted) {
+                    const thinkingBlockIndex = assignContentBlockIndex();
                     const contentBlockStart = {
                       type: "content_block_start",
-                      index: contentIndex,
+                      index: thinkingBlockIndex,
                       content_block: { type: "thinking", thinking: "" },
                     };
                     safeEnqueue(
@@ -517,13 +525,13 @@ export class AnthropicTransformer implements Transformer {
                         )}\n\n`
                       )
                     );
-                    currentContentBlockIndex = contentIndex;
+                    currentContentBlockIndex = thinkingBlockIndex;
                     isThinkingStarted = true;
                   }
                   if (choice.delta.thinking.signature) {
                     const thinkingSignature = {
                       type: "content_block_delta",
-                      index: contentIndex,
+                      index: currentContentBlockIndex,
                       delta: {
                         type: "signature_delta",
                         signature: choice.delta.thinking.signature,
@@ -538,7 +546,7 @@ export class AnthropicTransformer implements Transformer {
                     );
                     const contentBlockStop = {
                       type: "content_block_stop",
-                      index: contentIndex,
+                      index: currentContentBlockIndex,
                     };
                     safeEnqueue(
                       encoder.encode(
@@ -548,11 +556,10 @@ export class AnthropicTransformer implements Transformer {
                       )
                     );
                     currentContentBlockIndex = -1;
-                    contentIndex++;
                   } else if (choice.delta.thinking.content) {
                     const thinkingChunk = {
                       type: "content_block_delta",
-                      index: contentIndex,
+                      index: currentContentBlockIndex,
                       delta: {
                         type: "thinking_delta",
                         thinking: choice.delta.thinking.content || "",
@@ -593,9 +600,10 @@ export class AnthropicTransformer implements Transformer {
 
                   if (!hasTextContentStarted && !hasFinished) {
                     hasTextContentStarted = true;
+                    const textBlockIndex = assignContentBlockIndex();
                     const contentBlockStart = {
                       type: "content_block_start",
-                      index: contentIndex,
+                      index: textBlockIndex,
                       content_block: {
                         type: "text",
                         text: "",
@@ -608,7 +616,7 @@ export class AnthropicTransformer implements Transformer {
                         )}\n\n`
                       )
                     );
-                    currentContentBlockIndex = contentIndex;
+                    currentContentBlockIndex = textBlockIndex;
                   }
 
                   if (!isClosed && !hasFinished) {
@@ -653,10 +661,10 @@ export class AnthropicTransformer implements Transformer {
                   }
 
                   choice?.delta?.annotations.forEach((annotation: any) => {
-                    contentIndex++;
+                    const annotationBlockIndex = assignContentBlockIndex();
                     const contentBlockStart = {
                       type: "content_block_start",
-                      index: contentIndex,
+                      index: annotationBlockIndex,
                       content_block: {
                         type: "web_search_tool_result",
                         tool_use_id: `srvtoolu_${uuidv4()}`,
@@ -679,7 +687,7 @@ export class AnthropicTransformer implements Transformer {
 
                     const contentBlockStop = {
                       type: "content_block_stop",
-                      index: contentIndex,
+                      index: annotationBlockIndex,
                     };
                     safeEnqueue(
                       encoder.encode(
@@ -723,12 +731,12 @@ export class AnthropicTransformer implements Transformer {
                         currentContentBlockIndex = -1;
                       }
 
-                      const newContentBlockIndex = contentIndex;
+                      // 使用原子性的index分配，避免index冲突
+                      const newContentBlockIndex = assignContentBlockIndex();
                       toolCallIndexToContentBlockIndex.set(
                         toolCallIndex,
                         newContentBlockIndex
                       );
-                      contentIndex++; // Increment contentIndex after setting the mapping
                       const toolCallId =
                         toolCall.id || `call_${Date.now()}_${toolCallIndex}`;
                       const toolCallName =

@@ -212,13 +212,13 @@ async function sendRequestToProvider(
   }
 
   // 发送HTTP请求
-  // 准备headers，如果config.headers中没有authorization，则使用默认的Bearer token
+  // 准备headers
   const requestHeaders: Record<string, string> = {
     ...(config?.headers || {}),
   };
 
   // 只有在config.headers中没有显式设置authorization或x-api-key时，才使用默认的Bearer token
-  if (!requestHeaders.authorization && !requestHeaders['x-api-key']) {
+  if (!requestHeaders.authorization && !requestHeaders.Authorization && !requestHeaders['x-api-key']) {
     requestHeaders.Authorization = `Bearer ${provider.apiKey}`;
   }
 

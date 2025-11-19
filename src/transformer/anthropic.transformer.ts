@@ -18,23 +18,31 @@ import { formatBase64 } from "@/utils/image";
 export class AnthropicTransformer implements Transformer {
   name = "Anthropic";
   endPoint = "/v1/messages";
+  static TransformerName = "Anthropic";
   private useBearer: boolean;
+  private userAgent: string;
 
   constructor(private readonly options?: TransformerOptions) {
-    this.useBearer = this.options?.UseBearer ?? false;
+    this.useBearer = this.options?.useBearer ?? false;
+    this.userAgent = this.options?.userAgent ?? "";
   }
 
   async auth(request: any, provider: LLMProvider): Promise<any> {
-    const headers: Record<string, string | undefined> = {};
-
+    const headers = { ...(request.headers ?? {}) };
+    
     if (this.useBearer) {
       headers["authorization"] = `Bearer ${provider.apiKey}`;
-      headers["x-api-key"] = undefined;
+      delete headers["x-api-key"];
     } else {
       headers["x-api-key"] = provider.apiKey;
-      headers["authorization"] = undefined;
+      delete headers["authorization"];
     }
 
+    // 设置 user-agent 逻辑：
+    // 1. 如果 options 中有 userAgent，使用它
+    if (this.userAgent !== "") {
+      headers["user-agent"] = this.userAgent;
+    }
     return {
       body: request,
       config: {

@@ -306,6 +306,13 @@ export function buildRequestBody(
           }
         })
       );
+    } else if (message.content && typeof message.content === "object") {
+      // Object like { text: "..." }
+      if (message.content.text) {
+        parts.push({ text: message.content.text });
+      } else {
+        parts.push({ text: JSON.stringify(message.content) });
+      }
     }
 
     if (Array.isArray(message.tool_calls)) {
@@ -323,6 +330,11 @@ export function buildRequestBody(
         })
       );
     }
+
+    if (parts.length === 0) {
+      parts.push({ text: "" });
+    }
+
     return {
       role,
       parts,

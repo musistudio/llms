@@ -266,6 +266,19 @@ export class ForceReasoningTransformer implements Transformer {
             } catch (e) {
               console.error("Error releasing reader lock:", e);
             }
+
+            if (fsmState === "REASONING") {
+              const signatureDelta = {
+                thinking: { signature: new Date().getTime().toString() },
+              };
+              const signatureChunk = {
+                choices: [{ delta: signatureDelta }],
+              };
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify(signatureChunk)}\n\n`)
+              );
+            }
+
             controller.close();
           }
         },

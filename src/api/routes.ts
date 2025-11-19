@@ -217,9 +217,12 @@ async function sendRequestToProvider(
     ...(config?.headers || {}),
   };
 
-  // 只有在config.headers中没有显式设置authorization或x-api-key时，才使用默认的Bearer token
-  if (!requestHeaders.authorization && !requestHeaders.Authorization && !requestHeaders['x-api-key']) {
-    requestHeaders.Authorization = `Bearer ${provider.apiKey}`;
+  for(const key in requestHeaders) {
+      if (requestHeaders[key] === 'undefined') {
+          delete requestHeaders[key];
+      } else if (['authorization', 'Authorization'].includes(key) && requestHeaders[key]?.includes('undefined')) {
+          delete requestHeaders[key];
+      }
   }
 
   const response = await sendUnifiedRequest(
@@ -228,7 +231,7 @@ async function sendRequestToProvider(
     {
       httpsProxy: fastify._server!.configService.getHttpsProxy(),
       ...config,
-      headers: requestHeaders,
+      headers: JSON.parse(JSON.stringify(requestHeaders)),
     },
     fastify.log,
     context

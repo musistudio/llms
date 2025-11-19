@@ -214,6 +214,7 @@ async function sendRequestToProvider(
   // 发送HTTP请求
   // 准备headers
   const requestHeaders: Record<string, string> = {
+    Authorization: `Bearer ${provider.apiKey}`,
     ...(config?.headers || {}),
   };
 

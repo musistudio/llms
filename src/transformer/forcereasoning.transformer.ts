@@ -1,15 +1,13 @@
 import { UnifiedChatRequest } from "../types/llm";
 import { Transformer } from "../types/transformer";
 
-const PROMPT = `You are an expert reasoning model. 
-
-Always think step by step before answering. Even if the problem seems simple, always write down your reasoning process explicitly.
+const PROMPT = `Always think before answering. Even if the problem seems simple, always write down your reasoning process explicitly.
 
 Output format:
 <reasoning_content>
 Your detailed thinking process goes here
 </reasoning_content>
-Your final answer must follow after the closing tag above.`
+Your final answer must follow after the closing tag above.`;
 
 export class ForceReasoningTransformer implements Transformer {
   name = "forcereasoning";
@@ -17,21 +15,36 @@ export class ForceReasoningTransformer implements Transformer {
   async transformRequestIn(
     request: UnifiedChatRequest
   ): Promise<UnifiedChatRequest> {
-    const systemMessage = request.messages.find(
-      (item) => item.role === "system"
-    );
-    if (Array.isArray(systemMessage?.content)) {
-      systemMessage.content.push({
-        type: "text",
-        text: PROMPT,
+    request.messages
+      .filter((msg) => msg.role === "assistant")
+      .forEach((message) => {
+        if (message.thinking) {
+          if (message.thinking.content) {
+            message.content = `<reasoning_content>${message.thinking.content}</reasoning_content>\n${message.content}`;
+          }
+          delete message.thinking;
+        }
+        return message;
       });
-    }
     const lastMessage = request.messages[request.messages.length - 1];
-    if (lastMessage.role === "user" && Array.isArray(lastMessage.content)) {
-      lastMessage.content.push({
-        type: "text",
-        text: PROMPT,
-      });
+    if (lastMessage.role === "user") {
+      if (Array.isArray(lastMessage.content)) {
+        lastMessage.content.push({
+          type: "text",
+          text: PROMPT,
+        });
+      } else {
+        lastMessage.content = [
+          {
+            type: "text",
+            text: PROMPT,
+          },
+          {
+            type: "text",
+            text: lastMessage.content || '',
+          },
+        ];
+      }
     }
     if (lastMessage.role === "tool") {
       request.messages.push({
@@ -114,7 +127,9 @@ export class ForceReasoningTransformer implements Transformer {
                   fsmState = "REASONING";
                 } else {
                   for (let i = reasonStartTag.length - 1; i > 0; i--) {
-                    if (currentContent.endsWith(reasonStartTag.substring(0, i))) {
+                    if (
+                      currentContent.endsWith(reasonStartTag.substring(0, i))
+                    ) {
                       tagBuffer = currentContent.substring(
                         currentContent.length - i
                       );
@@ -126,21 +141,28 @@ export class ForceReasoningTransformer implements Transformer {
               } else if (fsmState === "REASONING") {
                 const endTagIndex = currentContent.indexOf(reasonStopTag);
                 if (endTagIndex !== -1) {
-                  const reasoningPart = currentContent.substring(0, endTagIndex);
+                  const reasoningPart = currentContent.substring(
+                    0,
+                    endTagIndex
+                  );
                   if (reasoningPart.length > 0) {
                     const newDelta = {
                       ...originalData.choices[0].delta,
                       thinking: {
-                        content: reasoningPart
+                        content: reasoningPart,
                       },
                     };
                     delete newDelta.content;
                     const thinkingChunk = {
                       ...originalData,
-                      choices: [{ ...originalData.choices[0], delta: newDelta }],
+                      choices: [
+                        { ...originalData.choices[0], delta: newDelta },
+                      ],
                     };
                     controller.enqueue(
-                      encoder.encode(`data: ${JSON.stringify(thinkingChunk)}\n\n`)
+                      encoder.encode(
+                        `data: ${JSON.stringify(thinkingChunk)}\n\n`
+                      )
                     );
                   }
 
@@ -152,10 +174,14 @@ export class ForceReasoningTransformer implements Transformer {
                   delete signatureDelta.content;
                   const signatureChunk = {
                     ...originalData,
-                    choices: [{ ...originalData.choices[0], delta: signatureDelta }],
+                    choices: [
+                      { ...originalData.choices[0], delta: signatureDelta },
+                    ],
                   };
                   controller.enqueue(
-                    encoder.encode(`data: ${JSON.stringify(signatureChunk)}\n\n`)
+                    encoder.encode(
+                      `data: ${JSON.stringify(signatureChunk)}\n\n`
+                    )
                   );
 
                   currentContent = currentContent.substring(
@@ -165,7 +191,9 @@ export class ForceReasoningTransformer implements Transformer {
                 } else {
                   let reasoningPart = currentContent;
                   for (let i = reasonStopTag.length - 1; i > 0; i--) {
-                    if (currentContent.endsWith(reasonStopTag.substring(0, i))) {
+                    if (
+                      currentContent.endsWith(reasonStopTag.substring(0, i))
+                    ) {
                       tagBuffer = currentContent.substring(
                         currentContent.length - i
                       );
@@ -177,17 +205,21 @@ export class ForceReasoningTransformer implements Transformer {
                     }
                   }
                   if (reasoningPart.length > 0) {
-                     const newDelta = {
+                    const newDelta = {
                       ...originalData.choices[0].delta,
                       thinking: { content: reasoningPart },
                     };
                     delete newDelta.content;
                     const thinkingChunk = {
                       ...originalData,
-                      choices: [{ ...originalData.choices[0], delta: newDelta }],
+                      choices: [
+                        { ...originalData.choices[0], delta: newDelta },
+                      ],
                     };
                     controller.enqueue(
-                      encoder.encode(`data: ${JSON.stringify(thinkingChunk)}\n\n`)
+                      encoder.encode(
+                        `data: ${JSON.stringify(thinkingChunk)}\n\n`
+                      )
                     );
                   }
                   currentContent = "";
@@ -207,7 +239,7 @@ export class ForceReasoningTransformer implements Transformer {
                       ...originalData.choices[0].delta,
                       content: finalPart,
                     };
-                    if(newDelta.thinking) delete newDelta.thinking
+                    if (newDelta.thinking) delete newDelta.thinking;
                     const finalChunk = {
                       ...originalData,
                       choices: [

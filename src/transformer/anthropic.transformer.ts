@@ -19,6 +19,7 @@ export class AnthropicTransformer implements Transformer {
   name = "Anthropic";
   endPoint = "/v1/messages";
   private useBearer: boolean;
+  logger?: any;
 
   constructor(private readonly options?: TransformerOptions) {
     this.useBearer = this.options?.UseBearer ?? false;
@@ -71,7 +72,7 @@ export class AnthropicTransformer implements Transformer {
 
     const requestMessages = JSON.parse(JSON.stringify(request.messages || []));
 
-    requestMessages?.forEach((msg: any, index: number) => {
+    requestMessages?.forEach((msg: any) => {
       if (msg.role === "user" || msg.role === "assistant") {
         if (typeof msg.content === "string") {
           messages.push({
@@ -87,7 +88,7 @@ export class AnthropicTransformer implements Transformer {
               (c: any) => c.type === "tool_result" && c.tool_use_id
             );
             if (toolParts.length) {
-              toolParts.forEach((tool: any, toolIndex: number) => {
+              toolParts.forEach((tool: any) => {
                 const toolMessage: UnifiedMessage = {
                   role: "tool",
                   content:
@@ -155,6 +156,17 @@ export class AnthropicTransformer implements Transformer {
                 };
               });
             }
+
+            const thinkingPart = msg.content.find(
+              (c: any) => c.type === "thinking" && c.signature
+            );
+            if (thinkingPart) {
+              assistantMessage.thinking = {
+                content: thinkingPart.thinking,
+                signature: thinkingPart.signature,
+              };
+            }
+
             messages.push(assistantMessage);
           }
           return;
@@ -206,7 +218,7 @@ export class AnthropicTransformer implements Transformer {
       }
       const convertedStream = await this.convertOpenAIStreamToAnthropic(
         response.body,
-        context
+        context!
       );
       return new Response(convertedStream, {
         headers: {
@@ -216,10 +228,10 @@ export class AnthropicTransformer implements Transformer {
         },
       });
     } else {
-      const data = await response.json();
+      const data = await response.json() as any;
       const anthropicResponse = this.convertOpenAIResponseToAnthropic(
         data,
-        context
+        context!
       );
       return new Response(JSON.stringify(anthropicResponse), {
         headers: { "Content-Type": "application/json" },
@@ -731,7 +743,6 @@ export class AnthropicTransformer implements Transformer {
                         currentContentBlockIndex = -1;
                       }
 
-                      // 使用原子性的index分配，避免index冲突
                       const newContentBlockIndex = assignContentBlockIndex();
                       toolCallIndexToContentBlockIndex.set(
                         toolCallIndex,
@@ -799,7 +810,7 @@ export class AnthropicTransformer implements Transformer {
                       try {
                         const anthropicChunk = {
                           type: "content_block_delta",
-                          index: blockIndex, // Use the correct content block index
+                          index: blockIndex,
                           delta: {
                             type: "input_json_delta",
                             partial_json: toolCall.function.arguments,
@@ -812,7 +823,7 @@ export class AnthropicTransformer implements Transformer {
                             )}\n\n`
                           )
                         );
-                      } catch (error) {
+                      } catch {
                         try {
                           const fixedArgument = toolCall.function.arguments
                             .replace(/[\x00-\x1F\x7F-\x9F]/g, "")
@@ -978,7 +989,7 @@ export class AnthropicTransformer implements Transformer {
         });
       }
       if (choice.message.tool_calls && choice.message.tool_calls.length > 0) {
-        choice.message.tool_calls.forEach((toolCall, index) => {
+        choice.message.tool_calls.forEach((toolCall) => {
           let parsedInput = {};
           try {
             const argumentsStr = toolCall.function.arguments || "{}";
@@ -988,7 +999,7 @@ export class AnthropicTransformer implements Transformer {
             } else if (typeof argumentsStr === "string") {
               parsedInput = JSON.parse(argumentsStr);
             }
-          } catch (parseError) {
+          } catch {
             parsedInput = { text: toolCall.function.arguments || "" };
           }
 
@@ -1037,7 +1048,7 @@ export class AnthropicTransformer implements Transformer {
         `Conversion complete, final Anthropic response`
       );
       return result;
-    } catch (e) {
+    } catch {
       throw createApiError(
         `Provider error: ${JSON.stringify(openaiResponse)}`,
         500,

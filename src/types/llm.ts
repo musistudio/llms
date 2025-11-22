@@ -140,6 +140,10 @@ export interface StreamChunk {
     delta: {
       role?: string;
       content?: string;
+      thinking?: {
+        content?: string;
+        signature?: string;
+      };
       tool_calls?: Array<{
         id?: string;
         type?: "function";

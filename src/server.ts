@@ -45,6 +45,7 @@ declare module "fastify" {
 interface ServerOptions {
   initialConfig?: AppConfig;
   logger?: boolean | PinoLoggerOptions;
+  shutdownOnFatal?: boolean;
 }
 
 // Application factory
@@ -66,9 +67,11 @@ function createApp(logger: boolean | PinoLoggerOptions): FastifyInstance {
 class Server {
   private app: FastifyInstance;
   configService: ConfigService;
-  llmService: LLMService;
-  providerService: ProviderService;
+  llmService!: LLMService;
+  providerService!: ProviderService;
   transformerService: TransformerService;
+  private initializationPromise: Promise<void>;
+  private readonly shutdownOnFatal: boolean;
 
   constructor(options: ServerOptions = {}) {
     this.app = createApp(options.logger ?? true);
@@ -77,7 +80,8 @@ class Server {
       this.configService,
       this.app.log
     );
-    this.transformerService.initialize().finally(() => {
+    this.shutdownOnFatal = options.shutdownOnFatal ?? false;
+    this.initializationPromise = this.transformerService.initialize().then(() => {
       this.providerService = new ProviderService(
         this.configService,
         this.transformerService,
@@ -119,17 +123,19 @@ class Server {
   public addHook(hookName: string, hookFunction: any): void {
     this.app.addHook(hookName as any, hookFunction);
   }
-
   async start(): Promise<void> {
+    this.app.log.debug("musistudio-llms: Entering start() method");
     try {
+      this.app.log.debug("musistudio-llms: Before await this.initializationPromise;");
+      await this.initializationPromise;
+      this.app.log.debug("musistudio-llms: After await this.initializationPromise;");
       this.app._server = this;
 
       this.app.addHook("preHandler", (request, reply, done) => {
         if (request.url.startsWith("/v1/messages") && request.body) {
           request.log.info({ data: request.body, type: "request body" });
-          request.body.stream === true;
-          if (!request.body.stream) {
-            request.body.stream = false; // Ensure stream is false if not set
+          if ((request.body as any).stream === undefined) {
+            (request.body as any).stream = false; // Ensure stream is false if not set
           }
         }
         done();
@@ -159,12 +165,79 @@ class Server {
 
       this.app.register(registerApiRoutes);
 
+      const port = parseInt(this.configService.get("PORT") || "3000", 10);
+      const host = this.configService.get("HOST") || "127.0.0.1";
+      this.app.log.info(`Starting LLMs server on ${host}:${port}`);
+
+      this.app.log.debug("musistudio-llms: Before this.app.listen()");
       const address = await this.app.listen({
-        port: parseInt(this.configService.get("PORT") || "3000", 10),
-        host: this.configService.get("HOST") || "127.0.0.1",
+        port,
+        host,
       });
+      this.app.log.debug("musistudio-llms: After this.app.listen()");
 
       this.app.log.info(`🚀 LLMs API server listening on ${address}`);
+
+      // Add event listeners to catch process exit reasons
+      process.on('beforeExit', (code) => {
+        this.app.log.info(`LLM Server beforeExit event with code: ${code}`);
+      });
+
+      process.on('exit', (code) => {
+        this.app.log.info(`LLM Server exit event with code: ${code}`);
+      });
+
+      let isShuttingDown = false;
+      const gracefulShutdown = async (
+        event: string,
+        error: Error,
+        promise?: Promise<any>
+      ) => {
+        if (isShuttingDown) return;
+        isShuttingDown = true;
+
+        if (event === "unhandledRejection") {
+          this.app.log.error(
+            { err: error, promise },
+            "LLM Server Unhandled Rejection"
+          );
+        } else {
+          this.app.log.error(
+            { err: error },
+            "LLM Server Uncaught Exception"
+          );
+        }
+
+        try {
+          await this.app.close();
+          this.app.log.info("Server closed gracefully.");
+          if (this.shutdownOnFatal) {
+            process.exit(1);
+          } else {
+            this.app.log.warn(
+              "Process exit suppressed after fatal event; caller is responsible for lifecycle management."
+            );
+          }
+        } catch (err) {
+          this.app.log.error({ err: err instanceof Error ? err : new Error(String(err)) }, "Error during graceful shutdown");
+          if (this.shutdownOnFatal) {
+            process.exit(1);
+          }
+        }
+      };
+
+      process.on("unhandledRejection", (reason, promise) => {
+        const error = reason instanceof Error ? reason : new Error(String(reason));
+        gracefulShutdown(
+          "unhandledRejection",
+          error,
+          promise
+        );
+      });
+
+      process.on("uncaughtException", (error) => {
+        gracefulShutdown("uncaughtException", error);
+      });
 
       const shutdown = async (signal: string) => {
         this.app.log.info(`Received ${signal}, shutting down gracefully...`);
@@ -175,9 +248,10 @@ class Server {
       process.on("SIGINT", () => shutdown("SIGINT"));
       process.on("SIGTERM", () => shutdown("SIGTERM"));
     } catch (error) {
-      this.app.log.error(`Error starting server: ${error}`);
+      this.app.log.error({ err: error instanceof Error ? error : new Error(String(error)) }, "Error starting server");
       process.exit(1);
     }
+    this.app.log.debug("musistudio-llms: Exiting start() method");
   }
 }
 

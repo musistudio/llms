@@ -589,7 +589,7 @@ export async function transformResponseOut(
       usage: {
         completion_tokens: jsonResponse.usageMetadata.candidatesTokenCount,
         prompt_tokens: jsonResponse.usageMetadata.promptTokenCount,
-        cached_content_token_count:
+        cache_read_input_tokens:
           jsonResponse.usageMetadata.cachedContentTokenCount || null,
         total_tokens: jsonResponse.usageMetadata.totalTokenCount,
         thoughts_token_count: jsonResponse.usageMetadata?.thoughtsTokenCount,
@@ -809,9 +809,39 @@ export async function transformResponseOut(
                   }
                 }
 
-                if (textContent && !signatureSent) {
-                  pendingContent += textContent;
-                  return;
+                if (hasThinkingContent && textContent && !signatureSent) {
+                  if (chunk.modelVersion.includes("3")) {
+                    pendingContent += textContent;
+                    return;
+                  } else {
+                    const signatureChunk = {
+                      choices: [
+                        {
+                          delta: {
+                            role: "assistant",
+                            content: null,
+                            thinking: {
+                              signature: `ccr_${+new Date()}`,
+                            },
+                          },
+                          finish_reason: null,
+                          index: contentIndex,
+                          logprobs: null,
+                        },
+                      ],
+                      created: parseInt(new Date().getTime() / 1000 + "", 10),
+                      id: chunk.responseId || "",
+                      model: chunk.modelVersion || "",
+                      object: "chat.completion.chunk",
+                      system_fingerprint: "fp_a49d71b8a1",
+                    };
+                    controller.enqueue(
+                      encoder.encode(
+                        `data: ${JSON.stringify(signatureChunk)}\n\n`
+                      )
+                    );
+                    signatureSent = true;
+                  }
                 }
 
                 if (textContent) {
@@ -838,7 +868,7 @@ export async function transformResponseOut(
                       completion_tokens:
                         chunk.usageMetadata?.candidatesTokenCount || 0,
                       prompt_tokens: chunk.usageMetadata?.promptTokenCount || 0,
-                      cached_content_token_count:
+                      cache_read_input_tokens:
                         chunk.usageMetadata?.cachedContentTokenCount || null,
                       total_tokens: chunk.usageMetadata?.totalTokenCount || 0,
                       thoughts_token_count:

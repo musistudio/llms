@@ -935,6 +935,17 @@ export async function transformResponseOut(
                       model: chunk.modelVersion || "",
                       object: "chat.completion.chunk",
                       system_fingerprint: "fp_a49d71b8a1",
+                      usage: {
+                        completion_tokens:
+                          chunk.usageMetadata?.candidatesTokenCount || 0,
+                        prompt_tokens:
+                          chunk.usageMetadata?.promptTokenCount || 0,
+                        cache_read_input_tokens:
+                          chunk.usageMetadata?.cachedContentTokenCount || null,
+                        total_tokens: chunk.usageMetadata?.totalTokenCount || 0,
+                        thoughts_token_count:
+                          chunk.usageMetadata?.thoughtsTokenCount,
+                      },
                     };
 
                     if (candidate?.groundingMetadata?.groundingChunks?.length) {

@@ -22,6 +22,7 @@ import Fastify, {
   onCloseHookHandler,
   FastifyBaseLogger,
   FastifyLoggerOptions,
+  FastifyServerOptions,
 } from "fastify";
 import cors from "@fastify/cors";
 import { ConfigService, AppConfig } from "./services/config";
@@ -42,16 +43,15 @@ declare module "fastify" {
   }
 }
 
-interface ServerOptions {
+interface ServerOptions extends FastifyServerOptions {
   initialConfig?: AppConfig;
-  logger?: boolean | PinoLoggerOptions;
 }
 
 // Application factory
-function createApp(logger: boolean | PinoLoggerOptions): FastifyInstance {
+function createApp(options: FastifyServerOptions = {}): FastifyInstance {
   const fastify = Fastify({
     bodyLimit: 50 * 1024 * 1024,
-    logger,
+    ...options,
   });
 
   // Register error handler
@@ -71,7 +71,12 @@ class Server {
   transformerService: TransformerService;
 
   constructor(options: ServerOptions = {}) {
-    this.app = createApp(options.logger ?? true);
+    // 设置默认 logger，如果用户没有提供的话
+    const {initialConfig, ...fastifyOptions} = options;
+    this.app = createApp({
+      ...fastifyOptions,
+      logger: fastifyOptions.logger ?? true,
+    });
     this.configService = new ConfigService(options);
     this.transformerService = new TransformerService(
       this.configService,

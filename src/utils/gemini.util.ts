@@ -520,6 +520,8 @@ export async function transformResponseOut(
 ): Promise<Response> {
   if (response.headers.get("Content-Type")?.includes("application/json")) {
     const jsonResponse: any = await response.json();
+    logger?.debug({ response: jsonResponse }, `${providerName} response:`);
+
     // Extract thinking content from parts with thought: true
     let thinkingContent = "";
     let thinkingSignature = "";
@@ -587,12 +589,17 @@ export async function transformResponseOut(
       model: jsonResponse.modelVersion,
       object: "chat.completion",
       usage: {
-        completion_tokens: jsonResponse.usageMetadata.candidatesTokenCount,
-        prompt_tokens: jsonResponse.usageMetadata.promptTokenCount,
-        cache_read_input_tokens:
-          jsonResponse.usageMetadata.cachedContentTokenCount || null,
-        total_tokens: jsonResponse.usageMetadata.totalTokenCount,
-        thoughts_token_count: jsonResponse.usageMetadata?.thoughtsTokenCount,
+        completion_tokens:
+          jsonResponse.usageMetadata?.candidatesTokenCount || 0,
+        prompt_tokens: jsonResponse.usageMetadata?.promptTokenCount || 0,
+        prompt_tokens_details: {
+          cached_tokens:
+            jsonResponse.usageMetadata?.cachedContentTokenCount || 0,
+        },
+        total_tokens: jsonResponse.usageMetadata?.totalTokenCount || 0,
+        output_tokens_details: {
+          reasoning_tokens: jsonResponse.usageMetadata?.thoughtsTokenCount || 0,
+        },
       },
     };
     return new Response(JSON.stringify(res), {
@@ -868,11 +875,15 @@ export async function transformResponseOut(
                       completion_tokens:
                         chunk.usageMetadata?.candidatesTokenCount || 0,
                       prompt_tokens: chunk.usageMetadata?.promptTokenCount || 0,
-                      cache_read_input_tokens:
-                        chunk.usageMetadata?.cachedContentTokenCount || null,
+                      prompt_tokens_details: {
+                        cached_tokens:
+                          chunk.usageMetadata?.cachedContentTokenCount || 0,
+                      },
                       total_tokens: chunk.usageMetadata?.totalTokenCount || 0,
-                      thoughts_token_count:
-                        chunk.usageMetadata?.thoughtsTokenCount,
+                      output_tokens_details: {
+                        reasoning_tokens:
+                          chunk.usageMetadata?.thoughtsTokenCount || 0,
+                      },
                     },
                   };
 
@@ -940,11 +951,15 @@ export async function transformResponseOut(
                           chunk.usageMetadata?.candidatesTokenCount || 0,
                         prompt_tokens:
                           chunk.usageMetadata?.promptTokenCount || 0,
-                        cache_read_input_tokens:
-                          chunk.usageMetadata?.cachedContentTokenCount || null,
+                        prompt_tokens_details: {
+                          cached_tokens:
+                            chunk.usageMetadata?.cachedContentTokenCount || 0,
+                        },
                         total_tokens: chunk.usageMetadata?.totalTokenCount || 0,
-                        thoughts_token_count:
-                          chunk.usageMetadata?.thoughtsTokenCount,
+                        output_tokens_details: {
+                          reasoning_tokens:
+                            chunk.usageMetadata?.thoughtsTokenCount || 0,
+                        },
                       },
                     };
 

@@ -117,7 +117,10 @@ export class AnthropicTransformer implements Transformer {
                       image_url: {
                         url:
                           part.source?.type === "base64"
-                            ? formatBase64(part.source.data, part.source.media_type)
+                            ? formatBase64(
+                                part.source.data,
+                                part.source.media_type
+                              )
                             : part.source.url,
                       },
                       media_type: part.source.media_type,
@@ -228,7 +231,7 @@ export class AnthropicTransformer implements Transformer {
         },
       });
     } else {
-      const data = await response.json() as any;
+      const data = (await response.json()) as any;
       const anthropicResponse = this.convertOpenAIResponseToAnthropic(
         data,
         context!
@@ -285,13 +288,11 @@ export class AnthropicTransformer implements Transformer {
             try {
               controller.enqueue(data);
               const dataStr = new TextDecoder().decode(data);
-              this.logger.debug(
-                {
-                  reqId: context.req.id,
-                  data: dataStr,
-                  type: 'send data'
-                }
-              );
+              this.logger.debug({
+                reqId: context.req.id,
+                data: dataStr,
+                type: "send data",
+              });
             } catch (error) {
               if (
                 error instanceof TypeError &&
@@ -299,13 +300,11 @@ export class AnthropicTransformer implements Transformer {
               ) {
                 isClosed = true;
               } else {
-                this.logger.debug(
-                  {
-                    reqId: context.req.id,
-                    error: error.message,
-                    type: 'send data error'
-                  }
-                );
+                this.logger.debug({
+                  reqId: context.req.id,
+                  error: error.message,
+                  type: "send data error",
+                });
                 throw error;
               }
             }
@@ -407,13 +406,11 @@ export class AnthropicTransformer implements Transformer {
 
               if (!line.startsWith("data:")) continue;
               const data = line.slice(5).trim();
-              this.logger.debug(
-                {
-                  reqId: context.req.id,
-                  type: 'recieved data',
-                  data
-                }
-              );
+              this.logger.debug({
+                reqId: context.req.id,
+                type: "recieved data",
+                data,
+              });
 
               if (data === "[DONE]") {
                 continue;
@@ -422,13 +419,11 @@ export class AnthropicTransformer implements Transformer {
               try {
                 const chunk = JSON.parse(data);
                 totalChunks++;
-                this.logger.debug(
-                  {
-                    reqId: context.req.id,
-                    response: chunk,
-                    tppe: "Original Response"
-                  }
-                );
+                this.logger.debug({
+                  reqId: context.req.id,
+                  response: chunk,
+                  tppe: "Original Response",
+                });
                 if (chunk.error) {
                   const errorMessage = {
                     type: "error",
@@ -487,18 +482,25 @@ export class AnthropicTransformer implements Transformer {
                         stop_sequence: null,
                       },
                       usage: {
-                        input_tokens: chunk.usage?.prompt_tokens || 0,
+                        input_tokens:
+                          (chunk.usage?.prompt_tokens || 0) -
+                          (chunk.usage?.prompt_tokens_details?.cached_tokens ||
+                            0),
                         output_tokens: chunk.usage?.completion_tokens || 0,
                         cache_read_input_tokens:
-                          chunk.usage?.cache_read_input_tokens || 0,
+                          chunk.usage?.prompt_tokens_details?.cached_tokens ||
+                          0,
                       },
                     };
                   } else {
                     stopReasonMessageDelta.usage = {
-                      input_tokens: chunk.usage?.prompt_tokens || 0,
+                      input_tokens:
+                        (chunk.usage?.prompt_tokens || 0) -
+                        (chunk.usage?.prompt_tokens_details?.cached_tokens ||
+                          0),
                       output_tokens: chunk.usage?.completion_tokens || 0,
                       cache_read_input_tokens:
-                        chunk.usage?.cache_read_input_tokens || 0,
+                        chunk.usage?.prompt_tokens_details?.cached_tokens || 0,
                     };
                   }
                 }
@@ -894,10 +896,14 @@ export class AnthropicTransformer implements Transformer {
                         stop_sequence: null,
                       },
                       usage: {
-                        input_tokens: chunk.usage?.prompt_tokens || 0,
+                        input_tokens:
+                          (chunk.usage?.prompt_tokens || 0) -
+                          (chunk.usage?.prompt_tokens_details?.cached_tokens ||
+                            0),
                         output_tokens: chunk.usage?.completion_tokens || 0,
                         cache_read_input_tokens:
-                          chunk.usage?.cache_read_input_tokens || 0,
+                          chunk.usage?.prompt_tokens_details?.cached_tokens ||
+                          0,
                       },
                     };
                   }
@@ -1036,8 +1042,12 @@ export class AnthropicTransformer implements Transformer {
             : "end_turn",
         stop_sequence: null,
         usage: {
-          input_tokens: openaiResponse.usage?.prompt_tokens || 0,
+          input_tokens:
+            (openaiResponse.usage?.prompt_tokens || 0) -
+            (openaiResponse.usage?.prompt_tokens_details?.cached_tokens || 0),
           output_tokens: openaiResponse.usage?.completion_tokens || 0,
+          cache_read_input_tokens:
+            openaiResponse.usage?.prompt_tokens_details?.cached_tokens || 0,
         },
       };
       this.logger.debug(

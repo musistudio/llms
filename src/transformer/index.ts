@@ -2,6 +2,7 @@ import { AnthropicTransformer } from "./anthropic.transformer";
 import { GeminiTransformer } from "./gemini.transformer";
 import { VertexGeminiTransformer } from "./vertex-gemini.transformer";
 import { DeepseekTransformer } from "./deepseek.transformer";
+import { DeepseekThinkingTransformer } from "./deepseek-thinking.transformer";
 import { TooluseTransformer } from "./tooluse.transformer";
 import { OpenrouterTransformer } from "./openrouter.transformer";
 import { MaxTokenTransformer } from "./maxtoken.transformer";
@@ -26,6 +27,7 @@ export default {
   VertexGeminiTransformer,
   VertexClaudeTransformer,
   DeepseekTransformer,
+  DeepseekThinkingTransformer,
   TooluseTransformer,
   OpenrouterTransformer,
   OpenAITransformer,

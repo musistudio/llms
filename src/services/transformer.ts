@@ -121,12 +121,16 @@ export class TransformerService {
 
   private async registerDefaultTransformersInternal(): Promise<void> {
     try {
+      this.logger.info('[TransformerService] Registering default transformers...');
+      this.logger.info('[TransformerService] Total transformers to register:', Object.keys(Transformers).length);
+
       Object.values(Transformers).forEach(
         (TransformerStatic: TransformerConstructor) => {
           if (
             "TransformerName" in TransformerStatic &&
             typeof TransformerStatic.TransformerName === "string"
           ) {
+            this.logger.info('[TransformerService] Registering static transformer:', TransformerStatic.TransformerName);
             this.registerTransformer(
               TransformerStatic.TransformerName,
               TransformerStatic
@@ -140,6 +144,7 @@ export class TransformerService {
             ) {
               (transformerInstance as any).logger = this.logger;
             }
+            this.logger.info('[TransformerService] Registering instance transformer:', transformerInstance.name);
             this.registerTransformer(
               transformerInstance.name!,
               transformerInstance
@@ -147,6 +152,7 @@ export class TransformerService {
           }
         }
       );
+      this.logger.info('[TransformerService] All transformers registered. Total count:', this.transformers.size);
     } catch (error) {
       this.logger.error({ error }, "transformer regist error:");
     }

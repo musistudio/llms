@@ -40,24 +40,37 @@ export class ProviderService {
         const transformer: LLMProvider["transformer"] = {}
 
         if (providerConfig.transformer) {
+          this.logger.info('[ProviderService] Loading transformers for provider:', providerConfig.name);
           Object.keys(providerConfig.transformer).forEach(key => {
             if (key === 'use') {
               if (Array.isArray(providerConfig.transformer.use)) {
+                this.logger.info('[ProviderService] Transformer names from config:', providerConfig.transformer.use);
                 transformer.use = providerConfig.transformer.use.map((transformer) => {
                   if (Array.isArray(transformer) && typeof transformer[0] === 'string') {
+                    this.logger.info('[ProviderService] Looking for transformer (array):', transformer[0]);
                     const Constructor = this.transformerService.getTransformer(transformer[0]);
                     if (Constructor) {
+                      this.logger.info('[ProviderService] Found transformer (array):', transformer[0]);
                       return new (Constructor as TransformerConstructor)(transformer[1]);
+                    } else {
+                      this.logger.warn('[ProviderService] Transformer NOT FOUND (array):', transformer[0]);
                     }
                   }
                   if (typeof transformer === 'string') {
+                    this.logger.info('[ProviderService] Looking for transformer (string):', transformer);
                     const transformerInstance = this.transformerService.getTransformer(transformer);
                     if (typeof transformerInstance === 'function') {
+                      this.logger.info('[ProviderService] Found transformer constructor:', transformer);
                       return new transformerInstance();
                     }
-                    return transformerInstance;
+                    if (transformerInstance) {
+                      this.logger.info('[ProviderService] Found transformer instance:', transformer);
+                      return transformerInstance;
+                    }
+                    this.logger.warn('[ProviderService] Transformer NOT FOUND (string):', transformer);
                   }
                 }).filter((transformer) => typeof transformer !== 'undefined');
+                this.logger.info('[ProviderService] Loaded transformers count:', transformer.use?.length || 0);
               }
             } else {
               if (Array.isArray(providerConfig.transformer[key]?.use)) {

@@ -39,7 +39,8 @@ async function handleTransformerEndpoint(
     transformer,
     req.headers,
     {
-      req
+      req,
+      model: body.model
     }
   );
 
@@ -52,7 +53,8 @@ async function handleTransformerEndpoint(
     bypass,
     transformer,
     {
-      req
+      req,
+      model: body.model
     }
   );
 
@@ -65,6 +67,7 @@ async function handleTransformerEndpoint(
     bypass,
     {
       req,
+      model: body.model
     }
   );
 

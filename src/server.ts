@@ -151,8 +151,8 @@ class Server {
                 .code(400)
                 .send({ error: "Missing model in request body" });
             }
-            const [provider, model] = body.model.split(",");
-            body.model = model;
+            const [provider, ...model] = body.model.split(",");
+            body.model = model.join(',');
             req.provider = provider;
             return;
           } catch (err) {

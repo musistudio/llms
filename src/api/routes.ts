@@ -39,7 +39,7 @@ async function handleTransformerEndpoint(
     transformer,
     req.headers,
     {
-      req
+      req,
     }
   );
 
@@ -52,7 +52,7 @@ async function handleTransformerEndpoint(
     bypass,
     transformer,
     {
-      req
+      req,
     }
   );
 
@@ -82,7 +82,7 @@ async function processRequestTransformers(
   provider: any,
   transformer: any,
   headers: any,
-  context: any,
+  context: any
 ) {
   let requestBody = body;
   let config = {};
@@ -218,12 +218,15 @@ async function sendRequestToProvider(
     ...(config?.headers || {}),
   };
 
-  for(const key in requestHeaders) {
-      if (requestHeaders[key] === 'undefined') {
-          delete requestHeaders[key];
-      } else if (['authorization', 'Authorization'].includes(key) && requestHeaders[key]?.includes('undefined')) {
-          delete requestHeaders[key];
-      }
+  for (const key in requestHeaders) {
+    if (requestHeaders[key] === "undefined") {
+      delete requestHeaders[key];
+    } else if (
+      ["authorization", "Authorization"].includes(key) &&
+      requestHeaders[key]?.includes("undefined")
+    ) {
+      delete requestHeaders[key];
+    }
   }
 
   const response = await sendUnifiedRequest(
@@ -241,6 +244,9 @@ async function sendRequestToProvider(
   // 处理请求错误
   if (!response.ok) {
     const errorText = await response.text();
+    fastify.log.error(
+      `[provider_response_error] Error from provider(${provider.name},${requestBody.model}: ${response.status}): ${errorText}`,
+    );
     throw createApiError(
       `Error from provider(${provider.name},${requestBody.model}: ${response.status}): ${errorText}`,
       response.status,

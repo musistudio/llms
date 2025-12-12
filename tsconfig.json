@@ -12,6 +12,7 @@
     "resolveJsonModule": true,
     "moduleResolution": "node",
     "declaration": true,
+    "declarationMap": true,
     "sourceMap": true,
     "baseUrl": "./",
     "paths": {

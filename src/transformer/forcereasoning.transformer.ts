@@ -9,22 +9,28 @@ Your detailed thinking process goes here
 </reasoning_content>
 Your final answer must follow after the closing tag above.`;
 
+const MAX_INTERLEAVED_TIMES = 10;
+
 export class ForceReasoningTransformer implements Transformer {
   name = "forcereasoning";
 
   async transformRequestIn(
     request: UnifiedChatRequest
   ): Promise<UnifiedChatRequest> {
+    let times = 0
     request.messages
       .filter((msg) => msg.role === "assistant")
+      .reverse()
       .forEach((message) => {
         if (message.thinking) {
           if (message.thinking.content) {
-            message.content = `<reasoning_content>${message.thinking.content}</reasoning_content>\n${message.content}`;
+            if (!message.content || times < MAX_INTERLEAVED_TIMES) {
+              times++;
+              message.content = `<reasoning_content>${message.thinking.content}</reasoning_content>\n${message.content}`;
+            }
           }
           delete message.thinking;
         }
-        return message;
       });
     const lastMessage = request.messages[request.messages.length - 1];
     if (lastMessage.role === "user") {
@@ -84,6 +90,7 @@ export class ForceReasoningTransformer implements Transformer {
       if (!response.body) {
         return response;
       }
+      let contentIndex = 0;
 
       const decoder = new TextDecoder();
       const encoder = new TextEncoder();
@@ -107,6 +114,7 @@ export class ForceReasoningTransformer implements Transformer {
                 Object.keys(originalData.choices[0].delta).length > 0 &&
                 !originalData.choices[0].delta.content
               ) {
+                originalData.choices[0].index = contentIndex
                 controller.enqueue(
                   encoder.encode(`data: ${JSON.stringify(originalData)}\n\n`)
                 );
@@ -156,7 +164,7 @@ export class ForceReasoningTransformer implements Transformer {
                     const thinkingChunk = {
                       ...originalData,
                       choices: [
-                        { ...originalData.choices[0], delta: newDelta },
+                        { ...originalData.choices[0], delta: newDelta, index: contentIndex },
                       ],
                     };
                     controller.enqueue(
@@ -175,7 +183,7 @@ export class ForceReasoningTransformer implements Transformer {
                   const signatureChunk = {
                     ...originalData,
                     choices: [
-                      { ...originalData.choices[0], delta: signatureDelta },
+                      { ...originalData.choices[0], delta: signatureDelta, index: contentIndex },
                     ],
                   };
                   controller.enqueue(
@@ -183,6 +191,7 @@ export class ForceReasoningTransformer implements Transformer {
                       `data: ${JSON.stringify(signatureChunk)}\n\n`
                     )
                   );
+                  contentIndex++;
 
                   currentContent = currentContent.substring(
                     endTagIndex + reasonStopTag.length
@@ -213,7 +222,7 @@ export class ForceReasoningTransformer implements Transformer {
                     const thinkingChunk = {
                       ...originalData,
                       choices: [
-                        { ...originalData.choices[0], delta: newDelta },
+                        { ...originalData.choices[0], delta: newDelta, index: contentIndex },
                       ],
                     };
                     controller.enqueue(
@@ -253,6 +262,7 @@ export class ForceReasoningTransformer implements Transformer {
                     finalBuffer = "";
                   }
                 }
+                contentIndex++
                 currentContent = "";
               }
             }

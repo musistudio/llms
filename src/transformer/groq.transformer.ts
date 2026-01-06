@@ -6,6 +6,11 @@ export class GroqTransformer implements Transformer {
   name = "groq";
 
   async transformRequestIn(request: UnifiedChatRequest): Promise<UnifiedChatRequest> {
+    // Remove reasoning property - Groq doesn't support it
+    if (request.reasoning) {
+      delete request.reasoning;
+    }
+
     request.messages.forEach(msg => {
       if (Array.isArray(msg.content)) {
         (msg.content as MessageContent[]).forEach((item) => {

@@ -20,6 +20,7 @@ import { VercelTransformer } from "./vercel.transformer";
 import { OpenAIResponsesTransformer } from "./openai.responses.transformer";
 import { ForceReasoningTransformer } from "./forcereasoning.transformer"
 import { VertexOpenaiTransformer } from "./vertex-openai.transformer";
+import { ExtraThinkTagTransformer } from "./extrathinktag.transformer";
 
 export default {
   AnthropicTransformer,
@@ -43,5 +44,6 @@ export default {
   VercelTransformer,
   OpenAIResponsesTransformer,
   ForceReasoningTransformer,
+  ExtraThinkTagTransformer,
   VertexOpenaiTransformer
 };

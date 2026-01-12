@@ -9,6 +9,10 @@
     ".": {
       "import": "./dist/esm/server.mjs",
       "require": "./dist/cjs/server.cjs"
+    },
+    "./lib": {
+      "import": "./dist/esm/index.mjs",
+      "require": "./dist/cjs/index.cjs"
     }
   },
   "scripts": {

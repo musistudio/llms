@@ -195,6 +195,10 @@ export class AnthropicTransformer implements Transformer {
         enabled: request.thinking.type === "enabled",
       };
     }
+    // Pass through reasoning_effort from CCR for providers like CCProxy
+    if (request.reasoning_effort) {
+      (result as any).reasoning_effort = request.reasoning_effort;
+    }
     if (request.tool_choice) {
       if (request.tool_choice.type === "tool") {
         result.tool_choice = {

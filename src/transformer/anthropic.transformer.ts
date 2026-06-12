@@ -177,15 +177,18 @@ export class AnthropicTransformer implements Transformer {
       }
     });
 
+    const tools = request.tools?.length
+      ? this.convertAnthropicToolsToUnified(request.tools)
+      : undefined;
     const result: UnifiedChatRequest = {
       messages,
       model: request.model,
       max_tokens: request.max_tokens,
       temperature: request.temperature,
       stream: request.stream,
-      tools: request.tools?.length
-        ? this.convertAnthropicToolsToUnified(request.tools)
-        : undefined,
+      // Server-side tools may all be filtered out — an empty tools array is
+      // rejected by some providers, so omit the field entirely in that case.
+      tools: tools?.length ? tools : undefined,
       tool_choice: request.tool_choice,
     };
     if (request.thinking) {
@@ -196,7 +199,16 @@ export class AnthropicTransformer implements Transformer {
       };
     }
     if (request.tool_choice) {
-      if (request.tool_choice.type === "tool") {
+      const choosesFilteredTool =
+        request.tool_choice.type === "tool" &&
+        !result.tools?.some(
+          (tool) => tool.function.name === request.tool_choice.name
+        );
+      if (!result.tools || choosesFilteredTool) {
+        // tool_choice pointing at a filtered server-side tool (or at nothing)
+        // would make providers reject the request with "unknown function".
+        delete result.tool_choice;
+      } else if (request.tool_choice.type === "tool") {
         result.tool_choice = {
           type: "function",
           function: { name: request.tool_choice.name },
@@ -243,14 +255,28 @@ export class AnthropicTransformer implements Transformer {
   }
 
   private convertAnthropicToolsToUnified(tools: any[]): UnifiedTool[] {
-    return tools.map((tool) => ({
-      type: "function",
-      function: {
-        name: tool.name,
-        description: tool.description || "",
-        parameters: tool.input_schema,
-      },
-    }));
+    return tools
+      .filter((tool) => {
+        // Anthropic server-side tools (web_search_20250305, code_execution_*,
+        // computer_*, ...) are executed by Anthropic's own infrastructure and
+        // carry no input_schema. They cannot be represented as OpenAI-style
+        // function tools: forwarding them produces `parameters: undefined`,
+        // which strict providers (e.g. xAI) reject with
+        // 400 "tools[0]: missing field `parameters`". Their type is versioned
+        // with a date suffix (`<name>_YYYYMMDD`), unlike client tools whose
+        // type is "custom" or absent.
+        return !(typeof tool.type === "string" && /_\d{8}$/.test(tool.type));
+      })
+      .map((tool) => ({
+        type: "function",
+        function: {
+          name: tool.name,
+          description: tool.description || "",
+          // A client tool without input_schema is valid for Anthropic but not
+          // for strict OpenAI-compatible providers — default to an empty schema.
+          parameters: tool.input_schema ?? { type: "object", properties: {} },
+        },
+      }));
   }
 
   private async convertOpenAIStreamToAnthropic(

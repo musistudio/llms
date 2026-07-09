@@ -41,7 +41,23 @@ export interface ImageContent {
   media_type: string;
 }
 
-export type MessageContent = TextContent | ImageContent;
+// OpenAI Chat Completions "file" content part (used for PDFs and other
+// documents). `file_data` is a base64 data URI; `file_id` references a file
+// uploaded via the Files API; `file_url` is a best-effort passthrough for
+// OpenAI-compatible gateways that accept a remote URL (not part of the official
+// OpenAI schema, but preferable to silently dropping the document).
+export interface FileContent {
+  type: "file";
+  file: {
+    filename?: string;
+    file_data?: string;
+    file_id?: string;
+    file_url?: string;
+  };
+  media_type?: string;
+}
+
+export type MessageContent = TextContent | ImageContent | FileContent;
 
 // 统一的消息接口
 export interface UnifiedMessage {

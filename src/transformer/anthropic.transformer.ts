@@ -4,6 +4,7 @@ import {
   UnifiedChatRequest,
   UnifiedMessage,
   UnifiedTool,
+  FileContent,
 } from "@/types/llm";
 import {
   Transformer,
@@ -42,6 +43,48 @@ export class AnthropicTransformer implements Transformer {
         headers,
       },
     };
+  }
+
+  // Map an Anthropic `document` content block to an OpenAI Chat Completions
+  // "file" content part. Anthropic supports several document sources; OpenAI
+  // natively accepts base64 (`file_data`) and uploaded files (`file_id`). A
+  // remote `url` source has no official OpenAI equivalent, so it is passed
+  // through as `file_url` (best-effort for OpenAI-compatible gateways) rather
+  // than dropped. `text`/`content` sources carry the text inline and are
+  // flattened to a plain text part.
+  private formatDocumentPart(part: any): FileContent | { type: "text"; text: string } {
+    const source = part?.source ?? {};
+    const filename = part?.title || source.filename;
+    if (source.type === "base64") {
+      return {
+        type: "file",
+        file: {
+          ...(filename ? { filename } : {}),
+          file_data: formatBase64(source.data, source.media_type),
+        },
+        media_type: source.media_type,
+      };
+    }
+    if (source.type === "file" && source.file_id) {
+      return { type: "file", file: { file_id: source.file_id } };
+    }
+    if (source.type === "url" && source.url) {
+      return {
+        type: "file",
+        file: {
+          ...(filename ? { filename } : {}),
+          file_url: source.url,
+        },
+      };
+    }
+    // `text`/`content` sources embed the document text directly.
+    const text =
+      typeof source.data === "string"
+        ? source.data
+        : typeof source.text === "string"
+        ? source.text
+        : "";
+    return { type: "text", text };
   }
 
   async transformRequestOut(
@@ -105,7 +148,8 @@ export class AnthropicTransformer implements Transformer {
             const textAndMediaParts = msg.content.filter(
               (c: any) =>
                 (c.type === "text" && c.text) ||
-                (c.type === "image" && c.source)
+                (c.type === "image" && c.source) ||
+                (c.type === "document" && c.source)
             );
             if (textAndMediaParts.length) {
               messages.push({
@@ -125,6 +169,9 @@ export class AnthropicTransformer implements Transformer {
                       },
                       media_type: part.source.media_type,
                     };
+                  }
+                  if (part?.type === "document") {
+                    return this.formatDocumentPart(part);
                   }
                   return part;
                 }),
